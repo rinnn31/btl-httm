@@ -1,0 +1,70 @@
+name: Build iOS unsigned
+
+on:
+  workflow_dispatch:
+
+jobs:
+  unity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - uses: actions/cache@v4
+        with:
+          path: Library
+          key: Library-iOS-${{ hashFiles('Assets/**', 'Packages/**', 'ProjectSettings/**') }}
+          restore-keys: Library-iOS-
+
+      - uses: game-ci/unity-builder@v4
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        with:
+          targetPlatform: iOS
+          buildName: UniverseSimAR
+
+      # Nén tar để giữ quyền thực thi của các file .sh
+      - run: tar -cf ios-build.tar -C build iOS
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: xcode-project
+          path: ios-build.tar
+          retention-days: 1
+
+  ipa:
+    needs: unity
+    runs-on: macos-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: xcode-project
+
+      - run: tar -xf ios-build.tar
+
+      - name: Archive không ký
+        run: |
+          xcodebuild archive \
+            -project iOS/Unity-iPhone.xcodeproj \
+            -scheme Unity-iPhone \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -archivePath $RUNNER_TEMP/app.xcarchive \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY=""
+
+      - name: Đóng gói .ipa
+        run: |
+          mkdir -p Payload
+          cp -R $RUNNER_TEMP/app.xcarchive/Products/Applications/*.app Payload/
+          zip -qry UniverseSimAR-unsigned.ipa Payload
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: UniverseSimAR-unsigned-ipa
+          path: UniverseSimAR-unsigned.ipa
