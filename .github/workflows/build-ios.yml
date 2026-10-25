@@ -1,23 +1,52 @@
-name: Build iOS unsigned
+
+name: Unity iOS Unsigned IPA
 
 on:
   workflow_dispatch:
+    inputs:
+      mode:
+        description: "Chọn build Unity mới hoặc dùng lại build cũ"
+        required: true
+        type: choice
+        options:
+          - build_unity
+          - package_ipa
+      source_run_id:
+        description: "Run ID đã tạo artifact Unity (chỉ dùng khi package_ipa)"
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+  actions: read
 
 jobs:
-  unity:
+  build-unity:
+    if: ${{ inputs.mode == 'build_unity' }}
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
         with:
           lfs: true
 
-      - uses: actions/cache@v4
+      - name: Add swap space
+        uses: pierotofy/set-swap-space@master
+        with:
+          swap-size-gb: 15
+
+      - name: Cache Unity Library
+        uses: actions/cache@v4
         with:
           path: Library
           key: Library-iOS-${{ hashFiles('Assets/**', 'Packages/**', 'ProjectSettings/**') }}
-          restore-keys: Library-iOS-
+          restore-keys: |
+            Library-iOS-
 
-      - uses: game-ci/unity-builder@v4
+      - name: Build Unity iOS
+        uses: game-ci/unity-builder@v4
         env:
           UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
           UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
@@ -25,46 +54,145 @@ jobs:
         with:
           targetPlatform: iOS
           buildName: UniverseSimAR
+          customParameters: -job-worker-count 2
 
-      # Nén tar để giữ quyền thực thi của các file .sh
-      - run: tar -cf ios-build.tar -C build iOS
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: xcode-project
-          path: ios-build.tar
-          retention-days: 1
-
-  ipa:
-    needs: unity
-    runs-on: macos-latest
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: xcode-project
-
-      - run: tar -xf ios-build.tar
-
-      - name: Archive không ký
+      - name: Verify Xcode project
+        shell: bash
         run: |
+          set -euo pipefail
+          echo "=== Build output ==="
+          find build -maxdepth 5 -print
+          PROJECT="$(find build/iOS -name 'Unity-iPhone.xcodeproj' -print -quit)"
+          if [ -z "$PROJECT" ]; then
+            echo "ERROR: Unity-iPhone.xcodeproj not found in build/iOS"
+            exit 1
+          fi
+          echo "Found: $PROJECT"
+
+      - name: Save Unity iOS build
+        uses: actions/upload-artifact@v4
+        with:
+          name: unity-ios-build
+          path: build/iOS/
+          if-no-files-found: error
+          retention-days: 7
+
+  package-ipa:
+    if: ${{ inputs.mode == 'package_ipa' }}
+    runs-on: macos-latest
+
+    steps:
+      - name: Validate source Run ID
+        shell: bash
+        env:
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$SOURCE_RUN_ID" =~ ^[0-9]+$ ]]; then
+            echo "ERROR: Enter the Run ID of a previous successful build_unity run."
+            exit 1
+          fi
+
+      - name: Download saved Unity build
+        uses: actions/download-artifact@v4
+        with:
+          name: unity-ios-build
+          path: iOS
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.source_run_id }}
+
+      - name: Locate Xcode project
+        id: locate
+        shell: bash
+        run: |
+          set -euo pipefail
+          PROJECT="$(find iOS -name 'Unity-iPhone.xcodeproj' -print -quit)"
+          if [ -z "$PROJECT" ]; then
+            echo "ERROR: Unity-iPhone.xcodeproj not found in downloaded artifact"
+            find iOS -maxdepth 5 -print
+            exit 1
+          fi
+          echo "project=$PROJECT" >> "$GITHUB_OUTPUT"
+          echo "Using project: $PROJECT"
+
+      - name: Fix shell script permissions
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          find iOS -type f -name "*.sh" -print -exec chmod +x {} \;
+
+          if [ -f "iOS/UniverseSimAR/process_symbols.sh" ]; then
+            chmod +x "iOS/UniverseSimAR/process_symbols.sh"
+          fi
+
+          echo "Shell script permissions updated."
+      
+      - name: Fix script and tool permissions
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          find iOS -type f -name "*.sh" -exec chmod +x {} \;
+
+          if [ -f "iOS/UniverseSimAR/usymtoolarm64" ]; then
+            chmod +x "iOS/UniverseSimAR/usymtoolarm64"
+          else
+            echo "ERROR: usymtoolarm64 not found"
+            find iOS -name "*usymtool*" -print
+            exit 1
+          fi
+
+          ls -l iOS/UniverseSimAR/process_symbols.sh
+          ls -l iOS/UniverseSimAR/usymtoolarm64
+
+      - name: Archive without signing
+        shell: bash
+        env:
+          PROJECT: ${{ steps.locate.outputs.project }}
+        run: |
+          set -euo pipefail
           xcodebuild archive \
-            -project iOS/Unity-iPhone.xcodeproj \
+            -project "$PROJECT" \
             -scheme Unity-iPhone \
             -configuration Release \
             -sdk iphoneos \
             -destination 'generic/platform=iOS' \
-            -archivePath $RUNNER_TEMP/app.xcarchive \
+            -archivePath "$RUNNER_TEMP/UniverseSimAR.xcarchive" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY=""
+            CODE_SIGN_IDENTITY="" \
+            archive
 
-      - name: Đóng gói .ipa
+      - name: Package unsigned IPA
+        shell: bash
         run: |
-          mkdir -p Payload
-          cp -R $RUNNER_TEMP/app.xcarchive/Products/Applications/*.app Payload/
-          zip -qry UniverseSimAR-unsigned.ipa Payload
+          set -euo pipefail
 
-      - uses: actions/upload-artifact@v4
+          APP="$RUNNER_TEMP/UniverseSimAR.xcarchive/Products/Applications/UniverseSimAR.app"
+
+          if [ ! -d "$APP" ]; then
+            echo "ERROR: Built .app not found in archive"
+            find "$RUNNER_TEMP/UniverseSimAR.xcarchive" -maxdepth 6 -print
+            exit 1
+          fi
+
+          mkdir -p "$RUNNER_TEMP/ipa/Payload"
+          cp -R "$APP" "$RUNNER_TEMP/ipa/Payload/"
+
+          cd "$RUNNER_TEMP/ipa"
+          /usr/bin/zip -qry \
+            "$GITHUB_WORKSPACE/UniverseSimAR-unsigned.ipa" \
+            Payload
+
+          test -s "$GITHUB_WORKSPACE/UniverseSimAR-unsigned.ipa"
+          echo "IPA created successfully"
+
+      - name: Upload unsigned IPA
+        uses: actions/upload-artifact@v4
         with:
           name: UniverseSimAR-unsigned-ipa
           path: UniverseSimAR-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 7
