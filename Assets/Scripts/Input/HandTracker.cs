@@ -53,23 +53,70 @@ namespace UniverseSimAR.Input {
            
         }
 
+
         private IEnumerator Start() {
             string modelPath = Path.Combine(Application.persistentDataPath, modelFileName);
+
             if (!File.Exists(modelPath)) {
-                string srcPath = Application.streamingAssetsPath + "/" + modelFileName;
-                using (var req = UnityWebRequest.Get(srcPath)) {
+                string srcPath = Path.Combine(Application.streamingAssetsPath, modelFileName);
+                string srcPathV2 = Application.streamingAssetsPath + "/" + modelFileName;
+                byte[] modelBytes = null;
+
+#if UNITY_IOS && !UNITY_EDITOR
+            try {
+                modelBytes = File.ReadAllBytes(srcPath);
+            }
+            catch (System.Exception e1) {
+                try
+                {
+                    modelBytes = File.ReadAllBytes(srcPathV2);
+                } catch (System.Exception e2) {
+                    Debug.LogError($"[HandTracker] Read model failed: {srcPath} and {srcPathV2}\n{e2}");
+                    yield break;
+                }
+            }
+#else
+
+                using (var req = UnityWebRequest.Get(srcPathV2)) {
                     yield return req.SendWebRequest();
+
                     if (req.result != UnityWebRequest.Result.Success) {
-                        Debug.LogError($"[HandTracker] Không đọc được model: {srcPath} ({req.error})");
+                        Debug.LogError(
+                            $"[HandTracker] Load model failed: {srcPathV2} ({req.error})"
+                        );
                         yield break;
                     }
-                    File.WriteAllBytes(modelPath, req.downloadHandler.data);
+
+                    modelBytes = req.downloadHandler.data;
+                }
+#endif
+
+                if (modelBytes == null || modelBytes.Length == 0) {
+                    Debug.LogError("[HandTracker] Model is empty.");
+                    yield break;
+                }
+
+                try {
+                    File.WriteAllBytes(modelPath, modelBytes);
+                }
+                catch (System.Exception e) {
+                    Debug.LogError(
+                        $"[HandTracker] Write model failed: {modelPath}\n{e}"
+                    );
+                    yield break;
                 }
             }
 
+            Debug.Log(
+                $"[HandTracker] Model path: {modelPath}, " +
+                $"exists: {File.Exists(modelPath)}, " +
+                $"size: {(File.Exists(modelPath) ? new FileInfo(modelPath).Length : 0)} bytes"
+            );
+
             var baseOptions = new BaseOptions(
                 useGpu ? BaseOptions.Delegate.GPU : BaseOptions.Delegate.CPU,
-                modelAssetPath: modelPath);
+                modelAssetPath: modelPath
+            );
 
             var options = new HandLandmarkerOptions(
                 baseOptions: baseOptions,
@@ -77,12 +124,19 @@ namespace UniverseSimAR.Input {
                 numHands: 1,
                 minHandDetectionConfidence: minHandDetectionConfidence,
                 minHandPresenceConfidence: minHandPresenceConfidence,
-                minTrackingConfidence: minTrackingConfidence);
+                minTrackingConfidence: minTrackingConfidence
+            );
 
-            landmarker = HandLandmarker.CreateFromOptions(options);
-            result = HandLandmarkerResult.Alloc(options.numHands);
-            ready = true;
+            try {
+                landmarker = HandLandmarker.CreateFromOptions(options);
+                result = HandLandmarkerResult.Alloc(options.numHands);
+                ready = true;
+            }
+            catch (System.Exception e) {
+                Debug.LogError($"[HandTracker] Init failed:\n{e}");
+            }
         }
+
 
         private void OnEnable() {
             if (cameraManager != null) cameraManager.frameReceived += OnCameraFrame;
