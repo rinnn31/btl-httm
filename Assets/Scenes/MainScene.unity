@@ -3638,9 +3638,10 @@ MonoBehaviour:
   leftEye: {fileID: 709979079}
   rightEye: {fileID: 792695652}
   ipdMm: 55
-  eyeWidth: 0.431
+  eyeWidth: 0.5
   zoom: 1
   resolutionScale: 1
+  screenWidthMmOverride: 0
 --- !u!1 &898757890
 GameObject:
   m_ObjectHideFlags: 0

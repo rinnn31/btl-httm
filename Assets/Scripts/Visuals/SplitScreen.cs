@@ -1,6 +1,7 @@
 ﻿using System.Collections;
 using UnityEngine;
 using UnityEngine.UI;
+using UniverseSimAR.Utils;
 
 namespace UniverseSimAR.Visuals {
     public class SplitScreen : MonoBehaviour {
@@ -12,9 +13,35 @@ namespace UniverseSimAR.Visuals {
         [Range(0.2f, 0.5f)] public float eyeWidth = 0.40f;
         [Range(1f, 2f)] public float zoom = 1f;
         [Range(0.3f, 1f)] public float resolutionScale = 0.8f;
+        [Tooltip("0 = tự tính từ Screen.dpi. iPhone 8 ≈ 104")]
+        public float screenWidthMmOverride = 0f;
 
         RenderTexture rt;
         Camera arCamera;
+
+        const string ConfigName = "vr_config";
+
+        void Awake() {
+            //LoadConfig();
+        }
+
+        public void LoadConfig() {
+            // giá trị trên Inspector làm mặc định cho lần chạy đầu
+            var defaults = new VRConfig {
+                ipdMm = ipdMm,
+                eyeWidth = eyeWidth,
+                zoom = zoom,
+                resolutionScale = resolutionScale,
+                screenWidthMmOverride = screenWidthMmOverride
+            };
+            var c = ConfigStore.Load(ConfigName, defaults);
+
+            ipdMm = c.ipdMm;
+            eyeWidth = c.eyeWidth;
+            zoom = c.zoom;
+            resolutionScale = c.resolutionScale;
+            screenWidthMmOverride = c.screenWidthMmOverride;
+        }
 
         IEnumerator Start() {
             arCamera = Camera.main;
@@ -25,8 +52,10 @@ namespace UniverseSimAR.Visuals {
 
             float dpi = Screen.dpi > 0 ? Screen.dpi : 400f;
             float screenWidthMm = Screen.width / dpi * 25.4f;
+
             float offset = (ipdMm * 0.5f) / screenWidthMm;
-            float ew = Mathf.Min(eyeWidth, offset * 2f); // không cho 2 ô chồng nhau
+            offset = Mathf.Min(offset, 0.25f);  
+            float ew = Mathf.Min(eyeWidth, offset * 2f);
 
             // RT luôn cùng tỉ lệ với màn hình
             int w = Mathf.RoundToInt(Screen.width * resolutionScale);
