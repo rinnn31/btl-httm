@@ -3,7 +3,7 @@ using UnityEngine.Events;
 using UniverseSimAR.Utils;
 
 namespace UniverseSimAR.Input {
-    public enum GestureState { UNKNOWN, PINCH, PINCH2, RELEASE }
+    public enum GestureState { UNKNOWN, PINCH, FIST, RELEASE }
     public enum MouseButtonState { UP, DOWN }
 
     [System.Serializable]
@@ -16,8 +16,15 @@ namespace UniverseSimAR.Input {
         public float pinchCloseDistance = 0.15f;
         public float pinchOpenDistance = 0.4f;
 
-        [Header("Middle Pinch Settings")]
-        public float middlePinchCloseDistance = 0.15f;
+        [Header("Fist -> Open (select) Settings")]
+        [Tooltip("Ti le (dau ngon - co tay) / (khop ngon - co tay) trung binh 4 ngon. Nho hon gia tri nay = dang nam tay.")]
+        public float fistCloseRatio = 1.0f;
+        [Tooltip("Lon hon gia tri nay = da mo tay (phai > fistCloseRatio de co hysteresis).")]
+        public float fistOpenRatio = 1.4f;
+        [Tooltip("Nam tay it nhat bao lau (giay) thi moi tinh la select. Loc nhieu.")]
+        public float minFistSeconds = 0.1f;
+        [Tooltip("Nam tay qua lau (giay) thi bo qua, khong ban select. 0 = khong gioi han.")]
+        public float maxFistSeconds = 3f;
 
         [Header("System Settings")]
         public int gestureConfirmFrames = 2;
@@ -47,7 +54,11 @@ namespace UniverseSimAR.Input {
         private HandTracker handTracker;
 
         private float smoothedPinchRatio = 1.0f;
-        private float smoothedMiddlePinchRatio = 1.0f;
+        private float smoothedCurlRatio = 2.0f;
+
+        private bool isFistRaw = false;
+        private float fistStartTime = 0f;
+        private Vector2 fistPos = Vector2.zero; 
 
         private void Awake() {
             handTracker = GetComponent<HandTracker>();
@@ -66,20 +77,13 @@ namespace UniverseSimAR.Input {
             if (mouseState == MouseButtonState.DOWN) MouseUp();
         }
 
+        private static Vector3 P(System.Collections.Generic.List<Mediapipe.Tasks.Components.Containers.NormalizedLandmark> l, int i) {
+            return new Vector3(l[i].x, l[i].y, l[i].z);
+        }
+
         private void HandTracker_HandDetected(System.Collections.Generic.List<Mediapipe.Tasks.Components.Containers.NormalizedLandmark> obj) {
             if (obj == null || obj.Count < 21) return;
-
-            Vector3 wrist = new Vector3(obj[0].x, obj[0].y, obj[0].z);
-            Vector3 thumbTip = new Vector3(obj[4].x, obj[4].y, obj[4].z);
-
-            Vector3 indexMcp = new Vector3(obj[5].x, obj[5].y, obj[5].z);
-            Vector3 middleMcp = new Vector3(obj[9].x, obj[9].y, obj[9].z);
-            Vector3 pinkyMcp = new Vector3(obj[17].x, obj[17].y, obj[17].z);
-
-            Vector3 indexTip = new Vector3(obj[8].x, obj[8].y, obj[8].z);
-            Vector3 middleTip = new Vector3(obj[12].x, obj[12].y, obj[12].z);
-
-            ProcessHandData(wrist, indexMcp, middleMcp, pinkyMcp, thumbTip, indexTip, middleTip);
+            ProcessHandData(obj);
         }
 
         private float Distance2D(Vector3 p1, Vector3 p2) {
@@ -96,31 +100,64 @@ namespace UniverseSimAR.Input {
             return Mathf.Max(0.0001f, Mathf.Max(dMiddle, Mathf.Max(dIndex, palmWidth)));
         }
 
-        private void ProcessHandData(Vector3 wrist, Vector3 indexMcp, Vector3 middleMcp, Vector3 pinkyMcp, Vector3 thumbTip, Vector3 indexTip, Vector3 middleTip) {
+        private float FingerCurl(Vector3 wrist, Vector3 mcp, Vector3 tip) {
+            return Distance2D(wrist, tip) / Mathf.Max(0.0001f, Distance2D(wrist, mcp));
+        }
+
+        private Vector2 ToScreen(Vector3 lm) {
+            return new Vector2(
+                Mathf.Clamp01(lm.x) * Screen.width,
+                Mathf.Clamp01(1f - lm.y) * Screen.height);
+        }
+
+        private void ProcessHandData(System.Collections.Generic.List<Mediapipe.Tasks.Components.Containers.NormalizedLandmark> lm) {
             lostHandFrames = 0;
 
-            float referenceLength = GetRobustPalmSize(wrist, indexMcp, middleMcp, pinkyMcp);
+            Vector3 wrist = P(lm, 0);
+            Vector3 thumbTip = P(lm, 4);
+            Vector3 indexMcp = P(lm, 5);
+            Vector3 indexTip = P(lm, 8);
+            Vector3 middleMcp = P(lm, 9);
+            Vector3 middleTip = P(lm, 12);
+            Vector3 ringMcp = P(lm, 13);
+            Vector3 ringTip = P(lm, 16);
+            Vector3 pinkyMcp = P(lm, 17);
+            Vector3 pinkyTip = P(lm, 20);
 
+            float referenceLength = GetRobustPalmSize(wrist, indexMcp, middleMcp, pinkyMcp);
             float rawPinchRatio = Distance2D(thumbTip, indexTip) / referenceLength;
             smoothedPinchRatio = Mathf.Lerp(smoothedPinchRatio, rawPinchRatio, 0.6f);
 
-            float rawMiddlePinchRatio = Distance2D(thumbTip, middleTip) / referenceLength;
-            smoothedMiddlePinchRatio = Mathf.Lerp(smoothedMiddlePinchRatio, rawMiddlePinchRatio, 0.6f);
+            float rawCurl = (FingerCurl(wrist, indexMcp, indexTip)
+                           + FingerCurl(wrist, middleMcp, middleTip)
+                           + FingerCurl(wrist, ringMcp, ringTip)
+                           + FingerCurl(wrist, pinkyMcp, pinkyTip)) * 0.25f;
+            smoothedCurlRatio = Mathf.Lerp(smoothedCurlRatio, rawCurl, 0.6f);
 
-            Vector3 cursorTarget = Vector3.Lerp(indexTip, thumbTip, 0.3f);
-            if (smoothedPinchRatio <= pinchMoveDistance) {
+            if (isFistRaw) {
+                if (smoothedCurlRatio >= fistOpenRatio) isFistRaw = false;
+            } else {
+                if (smoothedCurlRatio <= fistCloseRatio) isFistRaw = true;
+            }
+
+            if (isFistRaw) {
+                // luu vi tri long ban tay de ban "select" khi mo tay
+                fistPos = ToScreen(Vector3.Lerp(wrist, middleMcp, 0.5f));
+            } else if (smoothedPinchRatio <= pinchMoveDistance) {
+                Vector3 cursorTarget = Vector3.Lerp(indexTip, thumbTip, 0.3f);
                 UpdateCursor(cursorTarget, Time.time * 1000f, Screen.width, Screen.height);
             }
 
-            GestureState gesture = DetectGesture(smoothedPinchRatio, smoothedMiddlePinchRatio);
+            GestureState gesture = DetectGesture(smoothedPinchRatio);
 
-            Debug.Log($"[Hand] IndexPinch = {smoothedPinchRatio:F2} | MiddlePinch = {smoothedMiddlePinchRatio:F2} | state = {gesture.ToString()}");
+            Debug.Log($"[Hand] Pinch = {smoothedPinchRatio:F2} | Curl = {smoothedCurlRatio:F2} | state = {gesture}");
             UpdateGesture(gesture);
         }
 
-        private GestureState DetectGesture(float indexPinchDist, float middlePinchDist) {
-            if (middlePinchDist <= middlePinchCloseDistance) {
-                return GestureState.PINCH2;
+        private GestureState DetectGesture(float indexPinchDist) {
+            // Nam tay co uu tien cao nhat (khi nam, ngon cai thuong cham ngon tro -> tranh nhan nham thanh pinch)
+            if (isFistRaw) {
+                return GestureState.FIST;
             }
 
             if (gestureState == GestureState.PINCH) {
@@ -130,11 +167,11 @@ namespace UniverseSimAR.Input {
         }
 
         private void UpdateCursor(Vector3 indexTip, float timestampMs, int width, int height) {
-            float x = Mathf.Clamp(1f - indexTip.x, 0f, 1f);
-            float y = Mathf.Clamp(indexTip.y, 0f, 1f);
+            float x = Mathf.Clamp01(indexTip.x);
+            float y = Mathf.Clamp01(1f - indexTip.y);
 
-            float mouseX = filterX.Filter(1f - x, timestampMs) * width;
-            float mouseY = filterY.Filter(1f - y, timestampMs) * height;
+            float mouseX = filterX.Filter(x, timestampMs) * width;
+            float mouseY = filterY.Filter(y, timestampMs) * height;
 
             cursorP = new Vector2(mouseX, mouseY);
 
@@ -170,9 +207,20 @@ namespace UniverseSimAR.Input {
             pendingGesture = GestureState.UNKNOWN;
             pendingGestureFrames = 0;
 
-            if (gesture == GestureState.PINCH2 && previous != GestureState.PINCH2) {
-                onEvent.Invoke("pinch2", cursorP ?? Vector2.zero);
-            } else if (gesture == GestureState.PINCH && previous != GestureState.PINCH) {
+            if (gesture == GestureState.FIST && previous != GestureState.FIST) {
+                fistStartTime = Time.time;
+            }
+
+            if (previous == GestureState.FIST && gesture != GestureState.FIST) {
+                float held = Time.time - fistStartTime;
+                bool longEnough = held >= minFistSeconds;
+                bool notTooLong = maxFistSeconds <= 0f || held <= maxFistSeconds;
+                if (longEnough && notTooLong) {
+                    onEvent.Invoke("select", fistPos);
+                }
+            }
+
+            if (gesture == GestureState.PINCH && previous != GestureState.PINCH) {
                 MouseDown();
             } else if (gesture != GestureState.PINCH && mouseState == MouseButtonState.DOWN) {
                 MouseUp();
@@ -187,6 +235,7 @@ namespace UniverseSimAR.Input {
             gestureState = GestureState.RELEASE;
             pendingGesture = GestureState.UNKNOWN;
             pendingGestureFrames = 0;
+            isFistRaw = false; // mat tay thi huy, khong ban select
 
             filterX.Reset(); filterY.Reset();
             cursorP = null; lastEmittedP = null;

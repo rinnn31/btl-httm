@@ -11,9 +11,12 @@ namespace UniverseSimAR.UI.Components {
         public Button btnConfirm;
         public Button btnCancel;
         public Button btnPlacementMode;
-        
+
         [Header("Settings")]
+        [Tooltip("Khoảng cách UI nằm phía trên hành tinh, tính theo hướng 'lên' của màn hình người nhìn")]
         public float heightOffset = 0.03f;
+        [Tooltip("Kéo UI lại gần camera một chút để không bị hành tinh che khuất (0 = tắt)")]
+        public float towardCameraOffset = 0.02f;
 
         [Header("Placement Mode Texture")]
         public Sprite orbitModeTexture;
@@ -65,15 +68,27 @@ namespace UniverseSimAR.UI.Components {
             gameObject.SetActive(false);
         }
 
-        private void Update() {
+        private void LateUpdate() {
             if (targetCelestial == null || arCamera == null) return;
 
-            transform.position = targetCelestial.transform.position + Vector3.up * heightOffset;
+            Transform cam = arCamera.transform;
+            Vector3 anchor = targetCelestial.transform.position;
 
-            // Cho UI luôn quay về phía camera
-            Vector3 lookDirection = transform.position - arCamera.transform.position;
-            if (lookDirection != Vector3.zero) {
-                transform.rotation = Quaternion.LookRotation(lookDirection);
+            // Nằm phía trên hành tinh theo hướng "lên" của camera (màn hình), không phải trục Y của thế giới.
+            Vector3 pos = anchor + cam.up * heightOffset;
+
+            // Kéo nhẹ về phía camera để không bị chính hành tinh che.
+            if (towardCameraOffset > 0f) {
+                Vector3 toCam = (cam.position - anchor).normalized;
+                pos += toCam * towardCameraOffset;
+            }
+
+            transform.position = pos;
+
+            // Quay mặt về camera và giữ đúng chiều "lên" của camera nên UI luôn thẳng đứng theo người nhìn.
+            Vector3 lookDirection = pos - cam.position;
+            if (lookDirection.sqrMagnitude > 1e-8f) {
+                transform.rotation = Quaternion.LookRotation(lookDirection, cam.up);
             }
         }
 

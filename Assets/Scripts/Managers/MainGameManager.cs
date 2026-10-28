@@ -144,12 +144,13 @@ namespace UniverseSimAR.Managers {
         private void Update() {
             EnsureMainCamera();
 
+            Vector2 mp = ToCameraPixels(UnityEngine.Input.mousePosition);
             if (UnityEngine.Input.GetMouseButtonDown(0)) {
-                ProcessInputDown(UnityEngine.Input.mousePosition);
+                ProcessInputDown(mp);
             } else if (UnityEngine.Input.GetMouseButton(0)) {
-                ProcessInputMove(UnityEngine.Input.mousePosition);
+                ProcessInputMove(mp);
             } else if (UnityEngine.Input.GetMouseButtonUp(0)) {
-                ProcessInputUp(UnityEngine.Input.mousePosition);
+                ProcessInputUp(mp);
             }
 
             float now = Time.time * 1000f;
@@ -200,7 +201,7 @@ namespace UniverseSimAR.Managers {
                 }
 
                 labelMesh.gameObject.SetActive(true);
-                labelMesh.text = body.celestialName;
+                labelMesh.text = body.bodyType == CelestialType.Debris ? "" : body.celestialName;
 
                 float visualRadius = Mathf.Max(body.radius * body.transform.lossyScale.x, 0.05f);
 
@@ -224,7 +225,7 @@ namespace UniverseSimAR.Managers {
             labelObj.transform.SetParent(universeGroup != null ? universeGroup : transform);
 
             TextMesh tm = labelObj.AddComponent<TextMesh>();
-            tm.text = body.celestialName;
+            tm.text = body.bodyType == CelestialType.Debris ? "" : body.celestialName;
             tm.fontSize = labelFontSize;
             tm.characterSize = labelCharacterSize;
             tm.anchor = TextAnchor.LowerCenter;
@@ -329,10 +330,12 @@ namespace UniverseSimAR.Managers {
         }
 
         private void HandleInteractionEvent(string eventName, Vector2 pos) {
-            if (eventName == "pinch2") {
+            if (eventName == "select") {
                 MenuActionUI.Instance.ToggleVisible();
                 return;
             }
+
+            Vector2 mp = ToCameraPixels(UnityEngine.Input.mousePosition);
 
             switch (eventName) {
                 case "down":
@@ -396,7 +399,10 @@ namespace UniverseSimAR.Managers {
 
             UpdateActiveDragPlane(universeGroup != null ? universeGroup.position : Vector3.zero);
 
-            Vector2 screenCenter = new Vector2(Screen.width * 0.5f, Screen.height * 0.5f);
+            Vector2 screenCenter = mainCamera != null
+    ? new Vector2(mainCamera.pixelWidth * 0.5f, mainCamera.pixelHeight * 0.5f)
+    : new Vector2(Screen.width * 0.5f, Screen.height * 0.5f);
+
             Vector3 baseSpawnPos;
             if (!ScreenToPlane(screenCenter, out baseSpawnPos) && mainCamera != null) {
                 baseSpawnPos = mainCamera.transform.position + mainCamera.transform.forward * 1.2f;
@@ -651,6 +657,13 @@ namespace UniverseSimAR.Managers {
             UpdateCenterLinkLine();
         }
 
+        private Vector2 ToCameraPixels(Vector2 screenPos) {
+            if (mainCamera == null) return screenPos;
+            return new Vector2(
+                screenPos.x / Screen.width * mainCamera.pixelWidth,
+                screenPos.y / Screen.height * mainCamera.pixelHeight);
+        }
+
         private void OnPointerUp() {
             isPointerDown = false;
             isStillPressDownSinceSelect = false;
@@ -791,15 +804,20 @@ namespace UniverseSimAR.Managers {
             }
 
             float G = UniverseSystem.Instance.gravitationalConstant;
-            float vMagCircular = Mathf.Sqrt((G * primary.mass) / r);
-            float eccentricityFactor = 0.85f + Random.value * 0.25f;
-            float vMag = vMagCircular * eccentricityFactor;
 
+            // 1. Dùng trực tiếp vận tốc quỹ đạo tròn (Circular Orbit Velocity) mà không nhân với eccentricityFactor ngẫu nhiên
+            float vMag = Mathf.Sqrt((G * primary.mass) / r);
+
+            // 2. Lấy pháp tuyến mặt phẳng quỹ đạo
             Vector3 planeNormal = universeGroup != null ? universeGroup.up : Vector3.up;
 
+            // 3. Tính hướng vận tốc vuông góc với rVec và planeNormal
             Vector3 vDir = Vector3.Cross(planeNormal, rVec).normalized;
+
+            // 4. Trả về vận tốc quỹ đạo tròn cộng với vận tốc của hành tinh mẹ (nếu có)
             return (vDir * vMag) + primary.velocity;
         }
+
 
         private PointerTrail GetPointerSampleSampleAt(float tMs) {
             if (trail.Count == 0) {

@@ -20,7 +20,10 @@ namespace UniverseSimAR.UI.Components {
         public Button confirmBtn;
 
         [Header("Layout Settings")]
+        [Tooltip("Khoảng hở giữa Editor và NumPad (đơn vị thế giới, mét)")]
         public float spacing = 0.25f;
+        [Tooltip("Luôn xếp ngang (trái-phải) theo màn hình, kể cả khi đang ở chế độ dọc")]
+        public bool forceHorizontal = false;
 
         [Header("Settings")]
         public int maxMassValue = 1000000;
@@ -58,7 +61,7 @@ namespace UniverseSimAR.UI.Components {
                 if (NumPadUI.Instance != null) {
                     NumPadUI.Instance.Show(OnNumInput, OnDelInput, OnConfirmInput);
                     Canvas.ForceUpdateCanvases();
-                    UpdateLayoutPosition();
+                    ApplyLayout(true);
                 }
             });
 
@@ -67,7 +70,7 @@ namespace UniverseSimAR.UI.Components {
                 if (NumPadUI.Instance != null) {
                     NumPadUI.Instance.Show(OnNumInput, OnDelInput, OnConfirmInput);
                     Canvas.ForceUpdateCanvases();
-                    UpdateLayoutPosition();
+                    ApplyLayout(true);
                 }
             });
 
@@ -115,7 +118,7 @@ namespace UniverseSimAR.UI.Components {
                 NumPadUI.Instance.Hide();
             }
             Canvas.ForceUpdateCanvases();
-            UpdateLayoutPosition();
+            ApplyLayout(true);
         }
 
         private void SetMass(int newMass) {
@@ -144,119 +147,88 @@ namespace UniverseSimAR.UI.Components {
             }
 
             Canvas.ForceUpdateCanvases();
-            UpdateLayoutPosition();
+            ApplyLayout(true);
         }
 
-        private float GetUIWidth(GameObject ui) {
-            if (ui == null) return 0f;
-            RectTransform rect = ui.GetComponent<RectTransform>();
-            if (rect == null) return 0f;
-            return rect.rect.width * rect.lossyScale.x;
+        private static float GetUIWidth(RectTransform rect) {
+            return rect == null ? 0f : rect.rect.width * rect.lossyScale.x;
         }
 
-        private float GetUIHeight(GameObject ui) {
-            if (ui == null) return 0f;
-            RectTransform rect = ui.GetComponent<RectTransform>();
-            if (rect == null) return 0f;
-            return rect.rect.height * rect.lossyScale.y;
+        private static float GetUIHeight(RectTransform rect) {
+            return rect == null ? 0f : rect.rect.height * rect.lossyScale.y;
         }
 
-        private void UpdateLayoutPosition() {
-            if (arCamera == null)
-                arCamera = Camera.main;
+        // Tính vị trí gốc (pivot) của `root` sao cho TÂM hình chữ nhật `rect` rơi đúng vào worldCenter
+        // khi root có hướng xoay `rot`. Nhờ vậy UI luôn ở giữa dù pivot/anchor của canvas hay panel bị lệch.
+        private static Vector3 RootPositionForCenter(Transform root, RectTransform rect, Vector3 worldCenter, Quaternion rot) {
+            if (rect == null) return worldCenter;
+            Vector3 localCenter = root.InverseTransformPoint(rect.TransformPoint(rect.rect.center));
+            Vector3 worldOffset = rot * Vector3.Scale(localCenter, root.lossyScale);
+            return worldCenter - worldOffset;
+        }
 
-            if (arCamera == null || menuPanel == null)
+        // snap = true: đặt ngay lập tức, false: di chuyển mượt về đích.
+        private void ApplyLayout(bool snap) {
+            if (arCamera == null) arCamera = Camera.main;
+            if (arCamera == null || menuPanel == null) return;
+
+            Transform cam = arCamera.transform;
+            Vector3 center = cam.position + cam.forward * distanceFromCamera;
+
+            // Giữ chiều "lên" theo camera để UI thẳng theo hướng người nhìn
+            Quaternion rot = Quaternion.LookRotation(cam.forward, cam.up);
+
+            RectTransform editorRect = menuPanel.GetComponent<RectTransform>();
+            bool numPadActive = NumPadUI.Instance != null && NumPadUI.Instance.gameObject.activeSelf;
+
+            bool horizontal = forceHorizontal || Screen.width > Screen.height;
+            // Ngang: xếp theo trục phải của camera (Editor bên trái, NumPad bên phải).
+            // Dọc: xếp theo trục lên của camera.
+            Vector3 axis = horizontal ? cam.right : cam.up;
+
+            Vector3 editorCenter = center;
+            Vector3 numPadCenter = center;
+            RectTransform numPadRect = null;
+
+            if (numPadActive) {
+                numPadRect = NumPadUI.Instance.GetComponent<RectTransform>();
+
+                float sizeA = horizontal ? GetUIWidth(editorRect) : GetUIHeight(editorRect);
+                float sizeB = horizontal ? GetUIWidth(numPadRect) : GetUIHeight(numPadRect);
+
+                // Cả cụm (A + khoảng hở + B) nằm giữa tầm nhìn
+                float total = sizeA + spacing + sizeB;
+                editorCenter = center - axis * (total * 0.5f - sizeA * 0.5f);
+                numPadCenter = center + axis * (total * 0.5f - sizeB * 0.5f);
+            }
+
+            // Editor
+            Vector3 editorRootPos = RootPositionForCenter(transform, editorRect, editorCenter, rot);
+            MoveTo(transform, editorRootPos, rot, snap);
+
+            // NumPad
+            if (numPadActive) {
+                Transform npT = NumPadUI.Instance.transform;
+                Vector3 numPadRootPos = RootPositionForCenter(npT, numPadRect, numPadCenter, rot);
+                MoveTo(npT, numPadRootPos, rot, snap);
+            }
+        }
+
+        private void MoveTo(Transform t, Vector3 pos, Quaternion rot, bool snap) {
+            if (snap) {
+                t.SetPositionAndRotation(pos, rot);
                 return;
-
-            bool isLandscape = Screen.width > Screen.height;
-            bool isNumPadActive = NumPadUI.Instance != null && NumPadUI.Instance.gameObject.activeSelf;
-
-            Vector3 cameraPos = arCamera.transform.position;
-            Vector3 forward = arCamera.transform.forward;
-            Vector3 separationDir = arCamera.transform.up; // Trục chuẩn theo hướng màn hình
-
-            Vector3 centerTargetPos = cameraPos + forward * distanceFromCamera;
-
-            if (isNumPadActive) {
-                float sizeA = isLandscape ? GetUIWidth(menuPanel) : GetUIHeight(menuPanel);
-                float sizeB = isLandscape ? GetUIWidth(NumPadUI.Instance.gameObject) : GetUIHeight(NumPadUI.Instance.gameObject);
-
-                float offset = (sizeA + sizeB) * 0.5f + spacing;
-
-                transform.position = centerTargetPos - separationDir * (offset * 0.5f);
-
-                Vector3 numPadPos = centerTargetPos + separationDir * (offset * 0.5f);
-                NumPadUI.Instance.transform.position = numPadPos;
-                NumPadUI.Instance.transform.rotation = Quaternion.LookRotation(centerTargetPos - cameraPos);
-            } else {
-                transform.position = centerTargetPos;
             }
-
-            Vector3 lookDir = transform.position - cameraPos;
-            if (lookDir.sqrMagnitude > 0.001f) {
-                transform.rotation = Quaternion.LookRotation(lookDir);
-            }
+            // lerp không phụ thuộc framerate
+            float k = 1f - Mathf.Exp(-followSpeed * Time.deltaTime);
+            t.SetPositionAndRotation(
+                Vector3.Lerp(t.position, pos, k),
+                Quaternion.Slerp(t.rotation, rot, k));
         }
 
-        private void Update() {
+        private void LateUpdate() {
             if (menuPanel == null || !menuPanel.activeSelf || arCamera == null) return;
-
-            bool isLandscape = Screen.width > Screen.height;
-            bool isNumPadActive = NumPadUI.Instance != null && NumPadUI.Instance.gameObject.activeSelf;
-
-            Vector3 cameraPos = arCamera.transform.position;
-            Vector3 forward = arCamera.transform.forward;
-            Vector3 separationDir = arCamera.transform.up;
-
-            Vector3 centerTargetPos = cameraPos + forward * distanceFromCamera;
-
-            Vector3 targetPos;
-
-            if (isNumPadActive) {
-                float sizeA = isLandscape ? GetUIWidth(menuPanel) : GetUIHeight(menuPanel);
-                float sizeB = isLandscape ? GetUIWidth(NumPadUI.Instance.gameObject) : GetUIHeight(NumPadUI.Instance.gameObject);
-
-                float offset = (sizeA + sizeB) * 0.5f + spacing;
-
-                targetPos = centerTargetPos - separationDir * (offset * 0.5f);
-                Vector3 numPadTargetPos = centerTargetPos + separationDir * (offset * 0.5f);
-
-                Transform numPadTransform = NumPadUI.Instance.transform;
-
-                numPadTransform.position = Vector3.Lerp(
-                    numPadTransform.position,
-                    numPadTargetPos,
-                    Time.deltaTime * followSpeed
-                );
-
-                Vector3 numPadLookDir = centerTargetPos - cameraPos;
-                if (numPadLookDir.sqrMagnitude > 0.001f) {
-                    Quaternion numPadTargetRot = Quaternion.LookRotation(numPadLookDir);
-                    numPadTransform.rotation = Quaternion.Slerp(
-                        numPadTransform.rotation,
-                        numPadTargetRot,
-                        Time.deltaTime * followSpeed
-                    );
-                }
-            } else {
-                targetPos = centerTargetPos;
-            }
-
-            transform.position = Vector3.Lerp(
-                transform.position,
-                targetPos,
-                Time.deltaTime * followSpeed
-            );
-
-            Vector3 lookDir = centerTargetPos - cameraPos;
-            if (lookDir.sqrMagnitude > 0.001f) {
-                Quaternion targetRot = Quaternion.LookRotation(lookDir);
-                transform.rotation = Quaternion.Slerp(
-                    transform.rotation,
-                    targetRot,
-                    Time.deltaTime * followSpeed
-                );
-            }
+            ApplyLayout(false);
         }
     }
 }
