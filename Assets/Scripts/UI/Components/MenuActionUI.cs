@@ -125,6 +125,14 @@ Trả về kết quả hoàn toàn bằng cấu trúc JSON chuẩn.";
             else Instance = this;
 
             celestialTemplates ??= new CelestialItem[0];
+
+            var result = SpeechToText.IsLanguageSupported("vi-VN");
+            if (result == SpeechToText.LanguageSupport.Supported || result == SpeechToText.LanguageSupport.LikelySupported) {
+                SpeechToText.Initialize("vi-VN");
+            } else {
+                SpeechToText.Initialize();
+            }
+
         }
 
         private void Start() {
@@ -225,7 +233,7 @@ Trả về kết quả hoàn toàn bằng cấu trúc JSON chuẩn.";
             if (img) {
                 img.color = Color.green;
             }
-
+            Debug.Log("UniverseAR Speech Ready");
             isSpeech = true;
         }
 
@@ -242,6 +250,8 @@ Trả về kết quả hoàn toàn bằng cấu trúc JSON chuẩn.";
         }
 
         public void OnResultReceived(string spokenText, int? errorCode) {
+
+            Debug.Log("Got text: " + spokenText);
             if (errorCode == 0) {
                 Debug.Log("Got text: " + spokenText);
                 text = spokenText;
