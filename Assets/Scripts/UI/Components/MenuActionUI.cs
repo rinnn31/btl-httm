@@ -127,7 +127,7 @@ Trả về kết quả hoàn toàn bằng cấu trúc JSON chuẩn.";
             celestialTemplates ??= new CelestialItem[0];
 
             var result = SpeechToText.IsLanguageSupported("vi-VN");
-            if (result == SpeechToText.LanguageSupport.Supported || result == SpeechToText.LanguageSupport.LikelySupported) {
+            if (result == SpeechToText.LanguageSupport.Supported) {
                 SpeechToText.Initialize("vi-VN");
             } else {
                 SpeechToText.Initialize();
@@ -176,7 +176,7 @@ Trả về kết quả hoàn toàn bằng cấu trúc JSON chuẩn.";
                     SpeechToText.RequestPermissionAsync((permission) =>
                     {
                         if (permission == SpeechToText.Permission.Granted) {
-                            if (SpeechToText.Start(this, preferOfflineRecognition: true)) {
+                            if (SpeechToText.Start(this, preferOfflineRecognition: false)) {
                                 text = "";
                             } else isSpeech = false;
                         } else {

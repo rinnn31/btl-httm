@@ -422,6 +422,8 @@ namespace UniverseSimAR.Managers {
             if (PendingActionUI.Instance != null) {
                 PendingActionUI.Instance.Show(celestial);
             }
+
+            allowFirstTouchToPlace = true;
         }
 
         private Vector3 FindEmptyPosition(Vector3 preferredPos, float newRadius) {
@@ -560,6 +562,8 @@ namespace UniverseSimAR.Managers {
             Destroy(toDelete.gameObject);
         }
 
+        private bool allowFirstTouchToPlace = false;
+
         private void OnPointerDown(Vector2 pos) {
             trail.Clear();
             trail.Add(new PointerTrail { time = Time.time * 1000f, pos = pos });
@@ -578,9 +582,13 @@ namespace UniverseSimAR.Managers {
                         dragOffset = pendingCelestial.transform.position - hitPoint;
                     }
                 } else {
-                    if (ScreenToPlane(pos, out Vector3 worldHit)) {
-                        pendingCelestial.transform.position = worldHit;
-                        ClampToUniversePlane(pendingCelestial.transform);
+                    if (allowFirstTouchToPlace) {
+                        if (ScreenToPlane(pos, out Vector3 worldHit)) {
+                            pendingCelestial.transform.position = worldHit;
+                            ClampToUniversePlane(pendingCelestial.transform);
+                        }
+                    } else {
+                        allowFirstTouchToPlace = false;
                     }
                 }
                 pendingCelestial.velocity = Vector3.zero;
