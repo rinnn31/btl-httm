@@ -363,6 +363,13 @@
       },
       "url": "https://packages.unity.com"
     },
+    "com.yasirkula.speechtotext": {
+      "version": "https://github.com/yasirkula/UnitySpeechToText.git",
+      "depth": 0,
+      "source": "git",
+      "dependencies": {},
+      "hash": "27a99b18ba3d10477b26b91c6c3e8f2b0c391150"
+    },
     "com.unity.modules.accessibility": {
       "version": "1.0.0",
       "depth": 0,

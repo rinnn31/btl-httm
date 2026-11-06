@@ -1,7 +1,10 @@
-﻿using UnityEngine;
+﻿using System;
+using System.Linq;
+using UnityEngine;
 using UnityEngine.UI;
 using UniverseSimAR.Core;
 using UniverseSimAR.Managers;
+using UniverseSimAR.Utils;
 
 namespace UniverseSimAR.UI.Components {
     [System.Serializable]
@@ -10,8 +13,90 @@ namespace UniverseSimAR.UI.Components {
         public Celestial template;
     }
 
-    public class MenuActionUI : MonoBehaviour {
+    [System.Serializable]
+    public class CelestialResponseList {
+        public CelestialBodyData[] celestialBodies;
+    }
+
+    [System.Serializable]
+    public class CelestialBodyData {
+        public string celestialName;
+        public Vector3Data position;
+        public float radius;
+        public float mass;
+        public Vector3Data velocity;
+
+        // Các hàm tiện ích giúp chuyển đổi nhanh sang kiểu Vector3 của Unity
+        public Vector3 ToPositionVector() => new Vector3(position.x, position.y, position.z);
+        public Vector3 ToVelocityVector() => new Vector3(velocity.x, velocity.y, velocity.z);
+    }
+
+    [System.Serializable]
+    public class Vector3Data {
+        public float x;
+        public float y;
+        public float z;
+    }
+
+    public class MenuActionUI : MonoBehaviour, ISpeechToTextListener {
         public static MenuActionUI Instance { get; private set; }
+
+        private static string SYSTEM_PROMPT = @"Bạn là bộ xử lý ngôn ngữ tự nhiên thông minh cho ứng dụng mô phỏng không gian Unity. Nhiệm vụ của bạn là lắng nghe và phân tích câu lệnh giọng nói của người dùng để tạo ra danh sách các thiên thể theo đúng yêu cầu.
+Quy tắc giới hạn tham số:
+1. Khối lượng (mass): từ 0.00004 (Mặt Trăng) đến 0.5 (5 lần Mặt Trời).
+2. Bán kính (radius): từ 0.01 (Mặt Trăng) đến 0.15 (2.5 lần Mặt Trời).
+3. Vị trí (position - x, y, z): Tọa độ 3D hợp lý xung quanh tâm mô phỏng.
+4. Vận tốc (velocity - x, y, z): Phù hợp điều kiện G = 100 (dao động trong khoảng -15 đến 15).
+5. Các thiên thể cho phép: Trái Đất, Mặt Trăng, Mặt Trời, Sao Hỏa, Sao Kim, Sao Thủy, Sao Mộc, Sao Thổ, Sao Thiên Vương, Sao Hải Vương, Sao Diêm Vương.
+6. Yêu cầu các thiên thể nằm trên một mặt phẳng (z = 0) và không chồng lấn nhau.
+Trả về kết quả hoàn toàn bằng cấu trúc JSON chuẩn.";
+
+        private static string JSON_SCHEMA = @"{
+    ""type"": ""OBJECT"",
+    ""properties"": {
+        ""celestialBodies"": {
+            ""type"": ""ARRAY"",
+            ""description"": ""Danh sách các thiên thể được tạo ra"",
+            ""items"": {
+                ""type"": ""OBJECT"",
+                ""properties"": {
+                    ""celestialName"": {
+                        ""type"": ""STRING"",
+                        ""description"": ""Tên thiên thể""
+                    },
+                    ""position"": {
+                        ""type"": ""OBJECT"",
+                        ""properties"": {
+                            ""x"": { ""type"": ""NUMBER"" },
+                            ""y"": { ""type"": ""NUMBER"" },
+                            ""z"": { ""type"": ""NUMBER"" }
+                        },
+                        ""required"": [""x"", ""y"", ""z""]
+                    },
+                    ""radius"": { 
+                        ""type"": ""NUMBER"", 
+                        ""description"": ""Bán kính (0.01 đến 0.15)"" 
+                    },
+                    ""mass"": { 
+                        ""type"": ""NUMBER"", 
+                        ""description"": ""Khối lượng (0.00004 đến 0.5)"" 
+                    },
+                    ""velocity"": {
+                        ""type"": ""OBJECT"",
+                        ""properties"": {
+                            ""x"": { ""type"": ""NUMBER"" },
+                            ""y"": { ""type"": ""NUMBER"" },
+                            ""z"": { ""type"": ""NUMBER"" }
+                        },
+                        ""required"": [""x"", ""y"", ""z""]
+                    }
+                },
+                ""required"": [""celestialName"", ""position"", ""radius"", ""mass"", ""velocity""]
+            }
+        }
+    },
+    ""required"": [""celestialBodies""]
+}";
 
         [Header("References")]
         public GameObject menuPanel;
@@ -19,6 +104,8 @@ namespace UniverseSimAR.UI.Components {
         public Button addBtn;
         public Button prevBtn;
         public Button nextBtn;
+        public Button micBtn;
+        public Button resetBtn;
         public Image celestialImage;
 
         [Header("Settings")]
@@ -30,6 +117,8 @@ namespace UniverseSimAR.UI.Components {
         private Camera arCamera;
         private bool isLocked;
         private MainGameManager gameManager;
+        private bool isSpeech = false;
+        private string text = "";
 
         private void Awake() {
             if (Instance != null && Instance != this) Destroy(gameObject);
@@ -62,7 +151,32 @@ namespace UniverseSimAR.UI.Components {
             pauseBtn.onClick.AddListener(() => {
                 gameManager.TogglePause();
             });
+            resetBtn.onClick.AddListener(() => {
+                gameManager.ResetGame();
+            });
+            micBtn.onClick.AddListener(() => {
+                if (isSpeech) {
+                    SpeechToText.Cancel();
+                    isSpeech = false;
 
+                    Image img = micBtn.GetComponent<Image>();
+                    if (img) {
+                        img.color = new Color(150, 255, 222);
+                    }
+
+                } else {
+                    SpeechToText.RequestPermissionAsync((permission) =>
+                    {
+                        if (permission == SpeechToText.Permission.Granted) {
+                            if (SpeechToText.Start(this, preferOfflineRecognition: true)) {
+                                text = "";
+                            } else isSpeech = false;
+                        } else {
+                            isSpeech = false;
+                        }
+                    });
+                }
+            });
             SwitchTemplate(0);
         }
 
@@ -103,6 +217,59 @@ namespace UniverseSimAR.UI.Components {
             if (lookDir != Vector3.zero) {
                 Quaternion targetRot = Quaternion.LookRotation(lookDir);
                 transform.rotation = Quaternion.Slerp(transform.rotation, targetRot, Time.deltaTime * followSpeed);
+            }
+        }
+
+        public void OnReadyForSpeech() {
+            Image img = micBtn.GetComponent<Image>();
+            if (img) {
+                img.color = Color.green;
+            }
+
+            isSpeech = true;
+        }
+
+        public void OnBeginningOfSpeech() {
+            Debug.Log("Speech");
+        }
+
+        public void OnVoiceLevelChanged(float normalizedVoiceLevel) {
+
+        }
+
+        public void OnPartialResultReceived(string spokenText) {
+            //throw new System.NotImplementedException();
+        }
+
+        public void OnResultReceived(string spokenText, int? errorCode) {
+            if (errorCode == 0) {
+                Debug.Log("Got text: " + spokenText);
+                text = spokenText;
+
+                if (text != null) {
+                    StartCoroutine(GeminiJsonGenerator.SendGenerateRequest(SYSTEM_PROMPT, text, JSON_SCHEMA, (res) => {
+                        try {
+                            CelestialResponseList celestialResponse = JsonUtility.FromJson<CelestialResponseList>(res);
+
+                            gameManager.ResetGame();
+                            gameManager.TogglePause(true);
+                            foreach (CelestialBodyData ce in celestialResponse.celestialBodies) {
+                                Celestial celestial = celestialTemplates.Where(x => x.template.celestialName.ToLower() == ce.celestialName.ToLower()).FirstOrDefault()?.template;
+                                if (celestial !=  null) {
+                                    gameManager.AddCelestial(
+                                        celestial,
+                                        new Vector3(ce.position.x, ce.position.y, ce.position.z),
+                                        new Vector3(ce.velocity.x, ce.velocity.y, ce.velocity.z),
+                                        ce.radius,
+                                        ce.mass);
+                                }
+                            }
+                        } catch (Exception e) {
+                            Debug.LogException(e);
+                        }
+
+                    }));
+                }
             }
         }
     }

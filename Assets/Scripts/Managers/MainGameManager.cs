@@ -385,7 +385,7 @@ namespace UniverseSimAR.Managers {
             }
         }
 
-        public void AddCelestial(Celestial celestialTemplate) {
+        public void AddCelestial(Celestial celestialTemplate, Vector3? pos = null, Vector3? velocity = null, float? radius = null, float? mass = null) {
             DeselectCelestial();
 
             if (pendingCelestial != null) {
@@ -395,8 +395,13 @@ namespace UniverseSimAR.Managers {
             var celestial = Instantiate(celestialTemplate, universeGroup);
             celestial.id = System.Guid.NewGuid().ToString();
             celestial.isPending = true;
-            celestial.velocity = Vector3.zero;
-
+            celestial.velocity = velocity == null ? Vector3.zero : velocity.Value;
+            if (radius != null) {
+                celestial.radius = radius.Value;
+            }
+            if (mass != null) {
+                celestial.mass = mass.Value;
+            }
             UpdateActiveDragPlane(universeGroup != null ? universeGroup.position : Vector3.zero);
 
             Vector2 screenCenter = mainCamera != null
@@ -409,7 +414,7 @@ namespace UniverseSimAR.Managers {
             }
 
             Vector3 finalSpawnPos = FindEmptyPosition(baseSpawnPos, celestial.radius);
-            celestial.transform.position = finalSpawnPos;
+            celestial.transform.position = pos == null ? finalSpawnPos : pos.Value;
             ClampToUniversePlane(celestial.transform);
 
             SetPendingCelestial(celestial);
@@ -454,8 +459,9 @@ namespace UniverseSimAR.Managers {
             return preferredPos;
         }
 
-        public void TogglePause() {
-            UniverseSystem.Instance.pause = !UniverseSystem.Instance.pause;
+        public void TogglePause(bool? pause = null) {
+            if (pause == null) UniverseSystem.Instance.pause = !UniverseSystem.Instance.pause;
+            else UniverseSystem.Instance.pause = pause.Value;
         }
 
         private void SetPendingCelestial(Celestial tpl) {
@@ -794,6 +800,53 @@ namespace UniverseSimAR.Managers {
             }
 
             return closestBody;
+        }
+
+        public void ResetGame() {
+            CancelPending();
+
+            // 2. Bỏ chọn thiên thể hiện tại và ẩn bảng thông tin
+            DeselectCelestial();
+
+            // 3. Lấy tất cả các thiên thể hiện có trong scene và xóa chúng
+            Celestial[] allBodies = FindObjectsByType<Celestial>(FindObjectsSortMode.None);
+            foreach (var body in allBodies) {
+                if (body != null) {
+                    if (UniverseSystem.Instance != null) {
+                        UniverseSystem.Instance.UnregisterBody(body);
+                    }
+                    Destroy(body.gameObject);
+                }
+            }
+
+            // 4. Dọn dẹp toàn bộ nhãn tên (TextMesh) của hành tinh
+            foreach (var kvp in celestialLabels) {
+                if (kvp.Value != null) {
+                    Destroy(kvp.Value.gameObject);
+                }
+            }
+            celestialLabels.Clear();
+
+            // 5. Xóa bộ nhớ đệm vết quỹ đạo
+            activeTrails.Clear();
+
+            // 6. Đặt lại các tham chiếu và biến trạng thái
+            lockedPrimaryBody = null;
+            dragBody = null;
+            pressedBody = null;
+            targetOrbitBody = null;
+            isPointerDown = false;
+            isStillPressDownSinceSelect = false;
+
+            // 7. Ẩn đường kẻ tâm (Center Link Line)
+            if (centerLinkLine != null) {
+                centerLinkLine.positionCount = 0;
+            }
+
+            // 8. Đảm bảo trạng thái mô phỏng không bị tạm dừng (Unpause)
+            if (UniverseSystem.Instance != null) {
+                UniverseSystem.Instance.pause = false;
+            }
         }
 
         private Vector3 GetOrbitVelocity(Vector3 pos, Celestial primary) {
