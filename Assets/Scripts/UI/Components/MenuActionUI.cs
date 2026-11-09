@@ -242,7 +242,7 @@ Trả về kết quả hoàn toàn bằng cấu trúc JSON chuẩn.";
         }
 
         public void OnVoiceLevelChanged(float normalizedVoiceLevel) {
-
+            micBtn.transform.localScale = Vector3.one * (1 + 0.5f * normalizedVoiceLevel);
         }
 
         public void OnPartialResultReceived(string spokenText) {
@@ -251,18 +251,21 @@ Trả về kết quả hoàn toàn bằng cấu trúc JSON chuẩn.";
 
         public void OnResultReceived(string spokenText, int? errorCode) {
 
-            Debug.Log("Got text: " + spokenText);
+            micBtn.gameObject.transform.localScale = Vector3.one;
+            Debug.Log($"Code = {errorCode} | Text = {spokenText}");
             if (errorCode == 0) {
-                Debug.Log("Got text: " + spokenText);
                 text = spokenText;
 
                 if (text != null) {
                     StartCoroutine(GeminiJsonGenerator.SendGenerateRequest(SYSTEM_PROMPT, text, JSON_SCHEMA, (res) => {
+                        Debug.Log("Got response: " + res);
                         try {
                             CelestialResponseList celestialResponse = JsonUtility.FromJson<CelestialResponseList>(res);
 
                             gameManager.ResetGame();
                             gameManager.TogglePause(true);
+                            gameObject.SetActive(false);
+
                             foreach (CelestialBodyData ce in celestialResponse.celestialBodies) {
                                 Celestial celestial = celestialTemplates.Where(x => x.template.celestialName.ToLower() == ce.celestialName.ToLower()).FirstOrDefault()?.template;
                                 if (celestial !=  null) {

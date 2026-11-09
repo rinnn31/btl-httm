@@ -18,6 +18,13 @@ namespace UniverseSimAR.Input {
 
         public event Action HandLost;
 
+        /// <summary>Phat moi lan detect voi TAT CA cac tay (danh sach rong neu khong thay tay nao).
+        /// Danh sach/landmark la buffer dung lai -> chi doc dong bo trong handler.</summary>
+        public event Action<List<List<NormalizedLandmark>>> HandsDetected;
+        private readonly List<List<NormalizedLandmark>> allHands = new List<List<NormalizedLandmark>>(2);
+        private Vector2 lastPrimaryWrist;
+        private bool hasPrimary;
+
         private ARCameraManager cameraManager;
 
         [Header("Model")]
@@ -31,6 +38,8 @@ namespace UniverseSimAR.Input {
         public int targetLongSide = 320;
         [Tooltip("Frame counts for next detection")]
         public int detectEveryNFrames = 2;
+        [Tooltip("So tay toi da nhan dien (2 de render du 2 tay gia). Cu chi van chi dung 1 tay (tay duoc theo doi lien tuc).")]
+        public int maxHands = 2;
 
         [Header("Detection")]
         [Range(0.1f, 1f)] public float minHandDetectionConfidence = 0.5f;
@@ -49,8 +58,8 @@ namespace UniverseSimAR.Input {
         private long lastTimestampMs = -1;
 
         private void Awake() {
-            cameraManager = Camera.main.GetComponent<ARCameraManager>();   
-           
+            cameraManager = Camera.main.GetComponent<ARCameraManager>();
+
         }
 
 
@@ -121,7 +130,7 @@ namespace UniverseSimAR.Input {
             var options = new HandLandmarkerOptions(
                 baseOptions: baseOptions,
                 runningMode: RunningMode.VIDEO,
-                numHands: 1,
+                numHands: Mathf.Max(1, maxHands),
                 minHandDetectionConfidence: minHandDetectionConfidence,
                 minHandPresenceConfidence: minHandPresenceConfidence,
                 minTrackingConfidence: minTrackingConfidence
@@ -172,17 +181,38 @@ namespace UniverseSimAR.Input {
 
             bool ok = landmarker.TryDetectForVideo(image, ts, null, ref result);
 
-            if (!ok || result.handLandmarks == null || result.handLandmarks.Count == 0) {
+            allHands.Clear();
+            if (ok && result.handLandmarks != null) {
+                for (int i = 0; i < result.handLandmarks.Count; i++) {
+                    var l = result.handLandmarks[i].landmarks;
+                    if (l != null && l.Count >= 21) allHands.Add(l);
+                }
+            }
+            HandsDetected?.Invoke(allHands);
+
+            if (allHands.Count == 0) {
+                hasPrimary = false;
                 HandLost?.Invoke();
                 return;
             }
 
-            var landmarks = result.handLandmarks[0].landmarks;
-            if (landmarks == null || landmarks.Count < 21) {
-                HandLost?.Invoke();
-                return;
+            // Cu chi (HandInteraction) chi dung 1 tay: giu tay dang duoc theo doi (gan vi tri co tay lan truoc nhat)
+            // de con tro khong nhay qua lai giua 2 tay.
+            int pick = 0;
+            if (hasPrimary && allHands.Count > 1) {
+                float best = float.MaxValue;
+                for (int i = 0; i < allHands.Count; i++) {
+                    float dx = allHands[i][0].x - lastPrimaryWrist.x;
+                    float dy = allHands[i][0].y - lastPrimaryWrist.y;
+                    float d = dx * dx + dy * dy;
+                    if (d < best) { best = d; pick = i; }
+                }
             }
-            
+
+            var landmarks = allHands[pick];
+            lastPrimaryWrist = new Vector2(landmarks[0].x, landmarks[0].y);
+            hasPrimary = true;
+
             HandDetected?.Invoke(landmarks);
         }
 

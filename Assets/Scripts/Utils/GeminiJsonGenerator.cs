@@ -9,18 +9,9 @@ namespace UniverseSimAR.Utils {
         private static string apiKey = "AQ.Ab8RN6LVZ8iVeqlrIDxjBVPRsb_sm5aI67sHabpGq9X2w1yNJQ";
         private static string model = "gemini-3.1-flash-lite";
 
-        /// <summary>
-        /// Gửi request yêu cầu Gemini sinh JSON theo Schema định sẵn
-        /// </summary>
-        /// <param name="systemInstruction">Vai trò / Chỉ thị hệ thống</param>
-        /// <param name="userPrompt">Yêu cầu tạo dữ liệu từ người dùng</param>
-        /// <param name="jsonSchema">Chuỗi JSON Schema quy định cấu trúc output</param>
-        /// <param name="onSuccess">Callback nhận chuỗi JSON kết quả</param>
-
         public static IEnumerator SendGenerateRequest(string systemInstruction, string userPrompt, string jsonSchema, Action<string> callback) {
             string url = $"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={apiKey}";
 
-            // Xây dựng JSON payload chuẩn REST API của Gemini
             string jsonBody = $@"{{
             ""system_instruction"": {{
                 ""parts"": [{{

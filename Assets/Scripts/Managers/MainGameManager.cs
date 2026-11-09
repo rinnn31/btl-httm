@@ -2,6 +2,7 @@
 using UnityEngine;
 using UnityEngine.SceneManagement;
 using UnityEngine.XR.ARFoundation;
+using Mediapipe.Tasks.Components.Containers;
 using UniverseSimAR.Input;
 using UniverseSimAR.UI.Components;
 using UniverseSimAR.Core;
@@ -26,6 +27,31 @@ namespace UniverseSimAR.Managers {
         public int labelFontSize = 36;
         public float labelCharacterSize = 0.02f;
         public Color labelColor = Color.white;
+
+        [Header("Space Background (nen den vu tru, AR van track mat phang)")]
+        public bool startInSpaceMode = false;
+        [Tooltip("Anh nen vu tru (tot nhat la anh equirectangular 2:1). De trong = nen den + sao tu sinh.")]
+        public Texture2D spaceSkyboxImage;
+        public Color spaceBackgroundColor = Color.black;
+        public int starCount = 1500;
+
+        [Header("Virtual Hand 3D (hien khi Space Mode, toi da 2 tay)")]
+        [Tooltip("TAY 1: object goc cua mo hinh ban tay 3D (dat san trong scene, se tu dong an luc dau).")]
+        public Transform handModelRoot;
+        [Tooltip("TAY 1: 21 khop theo thu tu MediaPipe: 0 Wrist | 1-4 Thumb CMC,MCP,IP,Tip | 5-8 Index MCP,PIP,DIP,Tip | 9-12 Middle | 13-16 Ring | 17-20 Pinky. Bat buoc: 0,5,9,17. Tip (4,8,12,16,20) nen gan bone 'end' cua rig.")]
+        public Transform[] handModelBones = new Transform[21];
+        [Tooltip("TAY 2 (tuy chon): de trong thi chi render 1 tay. Co the dung prefab tay thu 2 (nen la ban lat guong neu can).")]
+        public Transform handModelRootABC;
+        [Tooltip("TAY 2: 21 khop, cung thu tu nhu TAY 1.")]
+        public Transform[] handModelBonesABC = new Transform[21];
+        [Tooltip("Khoang cach (m) tu camera toi ban tay.")]
+        public float handDepth = 0.6f;
+        [Tooltip("He so landmark.z -> do sau (m). Am = gan camera hon.")]
+        public float handZScale = 0.5f;
+        public float handSmoothing = 20f;
+        public int handLostFramesToHide = 6;
+        [Tooltip("Neu chi thay 1 tay: tay do duoc gan cho mo hinh dang theo doi no neu cach co tay lan truoc <= gia tri nay (m, trong khong gian camera).")]
+        public float handMatchDistance = 0.25f;
 
         [Header("Fling Settings")]
         public float flingVelocityScale = 0.75f;
@@ -70,6 +96,35 @@ namespace UniverseSimAR.Managers {
         private Camera mainCamera;
         private HandInteraction handInteraction;
 
+        private bool isSpaceMode = false;
+        private ARCameraBackground arCameraBackground;
+        private CameraClearFlags savedClearFlags;
+        private Color savedBackgroundColor;
+        private Material savedSkybox;
+        private bool savedBgEnabled;
+        private Material spaceSkyboxMat;
+        private Transform starRoot;
+        private Texture2D starTex;
+        private Material starMat;
+
+        private HandTracker handTracker;
+        private class HandState {
+            public Transform root;
+            public Transform[] bones;
+            public bool ready;
+            public bool visible;
+            public bool hasPose;
+            public int lostFrames;
+            public float restPalmLen = 1f;
+            public readonly Vector3[] target = new Vector3[21];   // khong gian camera
+            public readonly Vector3[] current = new Vector3[21];
+            public readonly Vector3[] world = new Vector3[21];
+        }
+        private readonly HandState[] handStates = { new HandState(), new HandState() };
+        private readonly Vector3[][] handTemp = { new Vector3[21], new Vector3[21] };
+        private readonly int[] handDetForSlot = { -1, -1 };
+        private static readonly int[] HandSolveOrder = { 1, 2, 3, 5, 6, 7, 9, 10, 11, 13, 14, 15, 17, 18, 19 };
+
         private void Awake() {
             if (Instance != null && Instance != this) {
                 Destroy(gameObject);
@@ -99,6 +154,16 @@ namespace UniverseSimAR.Managers {
             }
 
             SetupCenterLinkLine();
+
+            handTracker = GetComponent<HandTracker>();
+            if (handTracker != null) {
+                handTracker.HandsDetected += OnVirtualHandsDetected;
+            }
+            SetupHandModel();
+
+            if (startInSpaceMode) {
+                SetSpaceMode(true);
+            }
         }
 
         private void EnsureMainCamera() {
@@ -163,6 +228,393 @@ namespace UniverseSimAR.Managers {
             UpdateActiveOrbitTrails();
         }
 
+
+        // ===================== SPACE BACKGROUND =====================
+        // Chi tat phan VE video camera (ARCameraBackground). ARSession / ARPlaneManager /
+        // ARCameraManager van chay nen mat phang van duoc track va universeGroup van bam ARAnchor.
+        public bool IsSpaceMode => isSpaceMode;
+
+        public void ToggleSpaceMode() {
+            SetSpaceMode(!isSpaceMode);
+        }
+
+        public void SetSpaceMode(bool on) {
+            EnsureMainCamera();
+            if (mainCamera == null || on == isSpaceMode) {
+                return;
+            }
+
+            if (on) {
+                if (arCameraBackground == null) {
+                    arCameraBackground = FindAnyObjectByType<ARCameraBackground>();
+                }
+
+                savedClearFlags = mainCamera.clearFlags;
+                savedBackgroundColor = mainCamera.backgroundColor;
+                savedSkybox = RenderSettings.skybox;
+                savedBgEnabled = arCameraBackground != null && arCameraBackground.enabled;
+
+                if (arCameraBackground != null) {
+                    arCameraBackground.enabled = false;
+                }
+
+                if (spaceSkyboxImage != null && spaceSkyboxMat == null) {
+                    Shader sh = Shader.Find("Skybox/Panoramic");
+                    if (sh != null) {
+                        spaceSkyboxMat = new Material(sh);
+                        spaceSkyboxMat.SetTexture("_MainTex", spaceSkyboxImage);
+                    }
+                }
+
+                if (spaceSkyboxMat != null) {
+                    RenderSettings.skybox = spaceSkyboxMat;
+                    mainCamera.clearFlags = CameraClearFlags.Skybox;
+                } else {
+                    mainCamera.clearFlags = CameraClearFlags.SolidColor;
+                    mainCamera.backgroundColor = spaceBackgroundColor;
+                    if (starRoot == null) {
+                        BuildStarField();
+                    }
+                    starRoot.gameObject.SetActive(true);
+                }
+            } else {
+                mainCamera.clearFlags = savedClearFlags;
+                mainCamera.backgroundColor = savedBackgroundColor;
+                RenderSettings.skybox = savedSkybox;
+                HideVirtualHand();
+                if (arCameraBackground != null) {
+                    arCameraBackground.enabled = savedBgEnabled;
+                }
+                if (starRoot != null) {
+                    starRoot.gameObject.SetActive(false);
+                }
+            }
+
+            isSpaceMode = on;
+        }
+
+        private void BuildStarField() {
+            float farClip = mainCamera != null ? mainCamera.farClipPlane : 100f;
+            float radius = Mathf.Clamp(farClip * 0.8f, 5f, 50f);
+
+            var go = new GameObject("StarField");
+            starRoot = go.transform;
+
+            var ps = go.AddComponent<ParticleSystem>();
+            ps.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
+
+            var main = ps.main;
+            main.playOnAwake = false;
+            main.loop = false;
+            main.simulationSpace = ParticleSystemSimulationSpace.Local;
+            main.maxParticles = starCount;
+            main.startSpeed = 0f;
+            main.startLifetime = 1e9f;
+
+            var emission = ps.emission; emission.enabled = false;
+            var shape = ps.shape; shape.enabled = false;
+
+            starTex = new Texture2D(32, 32, TextureFormat.RGBA32, false);
+            starTex.wrapMode = TextureWrapMode.Clamp;
+            for (int y = 0; y < 32; y++) {
+                for (int x = 0; x < 32; x++) {
+                    float d = Vector2.Distance(new Vector2(x, y), new Vector2(15.5f, 15.5f)) / 16f;
+                    float a = Mathf.Clamp01(1f - d);
+                    starTex.SetPixel(x, y, new Color(1f, 1f, 1f, a * a));
+                }
+            }
+            starTex.Apply();
+
+            Shader sh = Shader.Find("Sprites/Default");
+            starMat = new Material(sh != null ? sh : Shader.Find("Hidden/InternalErrorShader"));
+            starMat.mainTexture = starTex;
+
+            var psr = go.GetComponent<ParticleSystemRenderer>();
+            psr.renderMode = ParticleSystemRenderMode.Billboard;
+            psr.sharedMaterial = starMat;
+            psr.minParticleSize = 0f;
+            psr.maxParticleSize = 0.05f;
+            psr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            psr.receiveShadows = false;
+
+            var ep = new ParticleSystem.EmitParams();
+            for (int i = 0; i < starCount; i++) {
+                ep.position = Random.onUnitSphere * radius;
+                ep.velocity = Vector3.zero;
+                ep.startLifetime = 1e9f;
+                ep.startSize = radius * Random.Range(0.006f, 0.02f);
+                float b = Random.Range(0.4f, 1f);
+                ep.startColor = new Color(b, b, b, 1f);
+                ps.Emit(ep, 1);
+            }
+            ps.Pause(true);
+
+            go.SetActive(false);
+        }
+
+        // ===================== VIRTUAL HAND 3D (toi da 2 tay) =====================
+        // Mo hinh co xuong (rig) duoc dieu khien bang landmark MediaPipe:
+        // moi xuong duoc xoay sao cho huong "khop -> khop ke tiep" trung voi huong landmark.
+        private void SetupHandModel() {
+            SetupHandState(handStates[0], handModelRoot, handModelBones);
+            SetupHandState(handStates[1], handModelRootABC, handModelBonesABC);
+        }
+
+        private void SetupHandState(HandState st, Transform root, Transform[] bones) {
+            st.ready = false;
+            st.root = root;
+            st.bones = bones;
+            if (root == null || bones == null || bones.Length < 21) {
+                return;
+            }
+
+            // Wrist(0), Index MCP(5), Middle MCP(9), Pinky MCP(17) la bat buoc
+            if (bones[0] == null || bones[5] == null || bones[9] == null || bones[17] == null) {
+                Debug.LogWarning($"[MainGameManager] Hand model '{root.name}' thieu bone bat buoc (0, 5, 9, 17).");
+                return;
+            }
+
+            // Khong de collider cua tay chan raycast PickBody; tat Animator de khong ghi de xuong
+            foreach (var c in root.GetComponentsInChildren<Collider>(true)) {
+                c.enabled = false;
+            }
+            foreach (var a in root.GetComponentsInChildren<Animator>(true)) {
+                a.enabled = false;
+            }
+
+            float palm = Vector3.Distance(bones[0].position, bones[9].position);
+            st.restPalmLen = Mathf.Max(0.0001f, palm / Mathf.Max(0.0001f, root.lossyScale.x));
+
+            root.gameObject.SetActive(false);
+            st.ready = true;
+        }
+
+        private void LandmarksToCameraLocal(List<NormalizedLandmark> lm, Vector3[] outLocal) {
+            Transform cam = mainCamera.transform;
+            for (int i = 0; i < 21; i++) {
+                // Cung cach map voi HandInteraction.ToScreen: x -> x, y -> 1 - y
+                float d = Mathf.Max(0.15f, handDepth + lm[i].z * handZScale);
+                Vector3 world = mainCamera.ViewportToWorldPoint(
+                    new Vector3(Mathf.Clamp01(lm[i].x), Mathf.Clamp01(1f - lm[i].y), d));
+                outLocal[i] = cam.InverseTransformPoint(world); // luu theo khong gian camera
+            }
+        }
+
+        // Khoang cach co tay (khong gian camera) giua tay phat hien `det` va mo hinh `slot`; vo cuc neu mo hinh chua co pose
+        private float HandSlotDist(int slot, int det) {
+            var st = handStates[slot];
+            if (!st.hasPose) {
+                return float.PositiveInfinity;
+            }
+            return Vector3.Distance(handTemp[det][0], st.target[0]);
+        }
+
+        private int NearestDetForSlot(int slot, int n) {
+            if (n <= 1) {
+                return 0;
+            }
+            float d0 = HandSlotDist(slot, 0);
+            float d1 = HandSlotDist(slot, 1);
+            return d1 < d0 ? 1 : 0;
+        }
+
+        // Gan cac tay phat hien (n <= 2) cho 2 mo hinh sao cho moi mo hinh bam on dinh vao 1 ban tay that
+        private void AssignDetectedHands(int n) {
+            handDetForSlot[0] = -1;
+            handDetForSlot[1] = -1;
+
+            bool r0 = handStates[0].ready;
+            bool r1 = handStates[1].ready;
+            if (n == 0 || (!r0 && !r1)) {
+                return;
+            }
+
+            if (!r1) { handDetForSlot[0] = NearestDetForSlot(0, n); return; }
+            if (!r0) { handDetForSlot[1] = NearestDetForSlot(1, n); return; }
+
+            if (n == 1) {
+                float d0 = HandSlotDist(0, 0);
+                float d1 = HandSlotDist(1, 0);
+                int slot;
+                if (float.IsInfinity(d0) && float.IsInfinity(d1)) {
+                    slot = 0;
+                } else {
+                    slot = d0 <= d1 ? 0 : 1;
+                    float best = Mathf.Min(d0, d1);
+                    int other = 1 - slot;
+                    // tay moi xuat hien xa tay dang theo doi va mo hinh con lai dang trong -> dung mo hinh con lai
+                    if (best > handMatchDistance && !handStates[other].hasPose) {
+                        slot = other;
+                    }
+                }
+                handDetForSlot[slot] = 0;
+                return;
+            }
+
+            // n == 2, ca 2 mo hinh san sang
+            bool p0 = handStates[0].hasPose;
+            bool p1 = handStates[1].hasPose;
+            if (p0 && p1) {
+                float straight = HandSlotDist(0, 0) + HandSlotDist(1, 1);
+                float crossed = HandSlotDist(0, 1) + HandSlotDist(1, 0);
+                bool swap = crossed < straight;
+                handDetForSlot[0] = swap ? 1 : 0;
+                handDetForSlot[1] = swap ? 0 : 1;
+            } else if (p0) {
+                int d = NearestDetForSlot(0, 2);
+                handDetForSlot[0] = d;
+                handDetForSlot[1] = 1 - d;
+            } else if (p1) {
+                int d = NearestDetForSlot(1, 2);
+                handDetForSlot[1] = d;
+                handDetForSlot[0] = 1 - d;
+            } else {
+                handDetForSlot[0] = 0;
+                handDetForSlot[1] = 1;
+            }
+        }
+
+        private void OnVirtualHandsDetected(List<List<NormalizedLandmark>> hands) {
+            if (!isSpaceMode || mainCamera == null) {
+                return;
+            }
+
+            int n = Mathf.Min(hands != null ? hands.Count : 0, 2);
+            for (int h = 0; h < n; h++) {
+                LandmarksToCameraLocal(hands[h], handTemp[h]);
+            }
+
+            AssignDetectedHands(n);
+
+            for (int s = 0; s < 2; s++) {
+                var st = handStates[s];
+                if (!st.ready) {
+                    continue;
+                }
+
+                int det = handDetForSlot[s];
+                if (det >= 0) {
+                    st.lostFrames = 0;
+                    System.Array.Copy(handTemp[det], st.target, 21);
+
+                    if (!st.hasPose) {
+                        System.Array.Copy(st.target, st.current, 21);
+                        st.hasPose = true;
+                    }
+                    if (!st.visible) {
+                        st.visible = true;
+                        st.root.gameObject.SetActive(true);
+                    }
+                } else if (st.visible) {
+                    st.lostFrames++;
+                    if (st.lostFrames >= handLostFramesToHide) {
+                        HideHandState(st);
+                    }
+                }
+            }
+        }
+
+        private void HideHandState(HandState st) {
+            st.visible = false;
+            st.hasPose = false;
+            st.lostFrames = 0;
+            if (st.root != null) {
+                st.root.gameObject.SetActive(false);
+            }
+        }
+
+        private void HideVirtualHand() {
+            HideHandState(handStates[0]);
+            HideHandState(handStates[1]);
+        }
+
+        private void UpdateVirtualHand() {
+            if (!isSpaceMode || mainCamera == null) {
+                return;
+            }
+
+            for (int s = 0; s < 2; s++) {
+                var st = handStates[s];
+                if (st.ready && st.visible) {
+                    UpdateHandState(st);
+                }
+            }
+        }
+
+        private void UpdateHandState(HandState st) {
+            Transform cam = mainCamera.transform;
+            float k = 1f - Mathf.Exp(-handSmoothing * Time.deltaTime);
+            for (int i = 0; i < 21; i++) {
+                st.current[i] = Vector3.Lerp(st.current[i], st.target[i], k);
+                st.world[i] = cam.TransformPoint(st.current[i]);
+            }
+
+            Transform[] bones = st.bones;
+            Vector3[] w = st.world;
+            Transform wrist = bones[0];
+
+            // 1) Scale mo hinh cho vua kich thuoc long ban tay, dat co tay dung vi tri
+            float palm = Vector3.Distance(w[0], w[9]);
+            st.root.localScale = Vector3.one * Mathf.Max(0.0001f, palm / st.restPalmLen);
+            wrist.position = w[0];
+
+            // 2) Xoay co tay: huong co tay -> ngon giua, roi xoay quanh truc do cho khop (ngon tro -> ngon ut)
+            Vector3 curFwd = bones[9].position - wrist.position;
+            Vector3 wantFwd = w[9] - w[0];
+            if (curFwd.sqrMagnitude > 1e-10f && wantFwd.sqrMagnitude > 1e-10f) {
+                wrist.rotation = Quaternion.FromToRotation(curFwd, wantFwd) * wrist.rotation;
+
+                Vector3 axis = wantFwd.normalized;
+                Vector3 curSide = Vector3.ProjectOnPlane(bones[17].position - bones[5].position, axis);
+                Vector3 wantSide = Vector3.ProjectOnPlane(w[17] - w[5], axis);
+                if (curSide.sqrMagnitude > 1e-10f && wantSide.sqrMagnitude > 1e-10f) {
+                    float angle = Vector3.SignedAngle(curSide, wantSide, axis);
+                    wrist.rotation = Quaternion.AngleAxis(angle, axis) * wrist.rotation;
+                }
+            }
+
+            // 3) Tung ngon: xoay cha truoc, con sau (HandSolveOrder da theo thu tu cha -> con)
+            foreach (int i in HandSolveOrder) {
+                Transform bone = bones[i];
+                Transform child = bones[i + 1];
+                if (bone == null || child == null) {
+                    continue;
+                }
+
+                Vector3 cur = child.position - bone.position;
+                Vector3 want = w[i + 1] - w[i];
+                if (cur.sqrMagnitude < 1e-10f || want.sqrMagnitude < 1e-10f) {
+                    continue;
+                }
+
+                bone.rotation = Quaternion.FromToRotation(cur, want) * bone.rotation;
+            }
+        }
+
+        private void LateUpdate() {
+            UpdateVirtualHand();
+
+            // Sao di theo vi tri camera (khong theo huong) -> luc nao cung o "vo cuc"
+            if (isSpaceMode && starRoot != null && starRoot.gameObject.activeSelf && mainCamera != null) {
+                starRoot.position = mainCamera.transform.position;
+            }
+
+#if UNITY_EDITOR
+            if (UnityEngine.Input.GetKeyDown(KeyCode.B)) {
+                ToggleSpaceMode();
+            }
+#endif
+        }
+
+        private void OnDestroy() {
+            if (handTracker != null) {
+                handTracker.HandsDetected -= OnVirtualHandsDetected;
+            }
+            if (spaceSkyboxMat != null) Destroy(spaceSkyboxMat);
+            if (starTex != null) Destroy(starTex);
+            if (starMat != null) Destroy(starMat);
+            if (starRoot != null) Destroy(starRoot.gameObject);
+        }
 
         private void UpdateCelestialLabels() {
             Celestial[] allBodies = FindObjectsByType<Celestial>();
@@ -486,7 +938,7 @@ namespace UniverseSimAR.Managers {
                 }
 
                 if (lockedPrimaryBody != null && lockedPrimaryBody != pendingCelestial) {
-                    pendingCelestial.velocity = GetOrbitVelocity(pendingCelestial.transform.position, lockedPrimaryBody);
+                    ApplyTwoBodyOrbit(pendingCelestial, lockedPrimaryBody);
                 } else {
                     pendingCelestial.velocity = Vector3.zero;
                 }
@@ -857,6 +1309,49 @@ namespace UniverseSimAR.Managers {
             }
         }
 
+        /// <summary>
+        /// Quy dao tron cua bai toan 2 vat:
+        ///  - toc do tuong doi v_rel = sqrt(G (M + m) / r)
+        ///  - vat con nhan v_rel * M/(M+m), vat me nhan nguoc chieu v_rel * m/(M+m)
+        ///  => tong dong luong giu nguyen (cap khong bi troi), dung ca khi 2 khoi luong bang nhau.
+        /// Khi M >> m thi ket qua gan nhu giong cong thuc cu.
+        /// </summary>
+        private void ApplyTwoBodyOrbit(Celestial child, Celestial primary) {
+            Vector3 rVec = child.transform.position - primary.transform.position;
+
+            // Dam bao khong bat dau ben trong vung va cham (UniverseSystem bo qua luc hap dan khi distance < sumR)
+            float minDist = (child.radius + primary.radius) * 1.1f;
+            if (rVec.magnitude < minDist) {
+                Vector3 dir = rVec.sqrMagnitude > 1e-10f
+                    ? rVec.normalized
+                    : (universeGroup != null ? universeGroup.right : Vector3.right);
+                rVec = dir * minDist;
+                child.transform.position = primary.transform.position + rVec;
+                ClampToUniversePlane(child.transform);
+                rVec = child.transform.position - primary.transform.position;
+            }
+
+            float r = rVec.magnitude;
+            if (r < 1e-5f || UniverseSystem.Instance == null) {
+                child.velocity = Vector3.zero;
+                return;
+            }
+
+            float G = UniverseSystem.Instance.gravitationalConstant;
+            float M = primary.mass;
+            float m = child.mass;
+            float total = M + m;
+
+            float vRel = Mathf.Sqrt(G * total / r);
+
+            Vector3 planeNormal = universeGroup != null ? universeGroup.up : Vector3.up;
+            Vector3 vDir = Vector3.Cross(planeNormal, rVec).normalized;
+
+            Vector3 baseVel = primary.velocity; // van toc nen cua he (tam khoi)
+            child.velocity = baseVel + vDir * (vRel * M / total);
+            primary.velocity = baseVel - vDir * (vRel * m / total);
+        }
+
         private Vector3 GetOrbitVelocity(Vector3 pos, Celestial primary) {
             Vector3 rVec = pos - primary.transform.position;
             float r = rVec.magnitude;
@@ -900,6 +1395,8 @@ namespace UniverseSimAR.Managers {
         }
 
         public void BackToHomeScene() {
+            SetSpaceMode(false);
+
             if (universeGroup != null) {
                 Destroy(universeGroup.gameObject);
             }
