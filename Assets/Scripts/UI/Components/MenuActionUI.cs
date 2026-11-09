@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Linq;
+using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
 using UniverseSimAR.Core;
@@ -107,6 +108,8 @@ Trả về kết quả hoàn toàn bằng cấu trúc JSON chuẩn.";
         public Button micBtn;
         public Button resetBtn;
         public Image celestialImage;
+        public Button toggleViewBtn;
+        public TMP_Text debugMicTxt;
 
         [Header("Settings")]
         public float distanceFromCamera = 1.5f;
@@ -172,12 +175,15 @@ Trả về kết quả hoàn toàn bằng cấu trúc JSON chuẩn.";
                         img.color = new Color(150, 255, 222);
                     }
 
+                    debugMicTxt.gameObject.SetActive(false);
+
                 } else {
                     SpeechToText.RequestPermissionAsync((permission) =>
                     {
                         if (permission == SpeechToText.Permission.Granted) {
                             if (SpeechToText.Start(this, preferOfflineRecognition: false)) {
                                 text = "";
+                                debugMicTxt.gameObject.SetActive(true);
                             } else isSpeech = false;
                         } else {
                             isSpeech = false;
@@ -185,6 +191,11 @@ Trả về kết quả hoàn toàn bằng cấu trúc JSON chuẩn.";
                     });
                 }
             });
+            toggleViewBtn.onClick.AddListener(() => {
+                gameManager.ToggleSpaceMode();
+            });
+
+            debugMicTxt.gameObject.SetActive(false);
             SwitchTemplate(0);
         }
 
@@ -246,12 +257,13 @@ Trả về kết quả hoàn toàn bằng cấu trúc JSON chuẩn.";
         }
 
         public void OnPartialResultReceived(string spokenText) {
-            //throw new System.NotImplementedException();
+            debugMicTxt.text = spokenText;
         }
 
         public void OnResultReceived(string spokenText, int? errorCode) {
 
             micBtn.gameObject.transform.localScale = Vector3.one;
+            debugMicTxt.text = $"[{errorCode}] {spokenText}";
             Debug.Log($"Code = {errorCode} | Text = {spokenText}");
             if (errorCode == 0) {
                 text = spokenText;
