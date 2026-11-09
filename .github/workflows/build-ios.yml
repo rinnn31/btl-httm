@@ -1,14 +1,14 @@
-
 name: Unity iOS Unsigned IPA
 
 on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "Chọn build Unity mới hoặc dùng lại build cũ"
+        description: "Chọn: build Unity, đóng gói IPA từ build cũ, hoặc build + đóng gói luôn"
         required: true
         type: choice
         options:
+          - build_and_package
           - build_unity
           - package_ipa
       source_run_id:
@@ -23,7 +23,7 @@ permissions:
 
 jobs:
   build-unity:
-    if: ${{ inputs.mode == 'build_unity' }}
+    if: ${{ inputs.mode == 'build_unity' || inputs.mode == 'build_and_package' }}
     runs-on: ubuntu-latest
 
     steps:
@@ -78,11 +78,19 @@ jobs:
           retention-days: 7
 
   package-ipa:
-    if: ${{ inputs.mode == 'package_ipa' }}
+    # package_ipa: chạy độc lập (build-unity bị skip).
+    # build_and_package: chờ build-unity thành công rồi mới chạy.
+    needs: build-unity
+    if: >-
+      ${{ !cancelled() && (
+        inputs.mode == 'package_ipa' ||
+        (inputs.mode == 'build_and_package' && needs.build-unity.result == 'success')
+      ) }}
     runs-on: macos-latest
 
     steps:
       - name: Validate source Run ID
+        if: ${{ inputs.mode == 'package_ipa' }}
         shell: bash
         env:
           SOURCE_RUN_ID: ${{ inputs.source_run_id }}
@@ -93,14 +101,15 @@ jobs:
             exit 1
           fi
 
-      - name: Download saved Unity build
+      - name: Download Unity build
         uses: actions/download-artifact@v4
         with:
           name: unity-ios-build
           path: iOS
           github-token: ${{ secrets.GITHUB_TOKEN }}
           repository: ${{ github.repository }}
-          run-id: ${{ inputs.source_run_id }}
+          # build_and_package: lấy artifact của chính run này; package_ipa: lấy từ run cũ
+          run-id: ${{ inputs.mode == 'build_and_package' && github.run_id || inputs.source_run_id }}
 
       - name: Locate Xcode project
         id: locate
@@ -128,7 +137,7 @@ jobs:
           fi
 
           echo "Shell script permissions updated."
-      
+
       - name: Fix script and tool permissions
         shell: bash
         run: |
