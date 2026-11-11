@@ -11,12 +11,23 @@ namespace UniverseSimAR.Utils {
 
         public static IEnumerator SendGenerateRequest(string systemInstruction, string userPrompt, string jsonSchema, Action<string> callback) {
             if (string.IsNullOrEmpty(ApiKey)) {
-                using (UnityWebRequest request = UnityWebRequest.Get("https://pastebin.com/raw/FAxsKFsa")) {
+                using (UnityWebRequest request = UnityWebRequest.Get("https://gist.githubusercontent.com/rinnn31/595160e51e20937936e5654810cc0ce6/raw/3674c1589145c8e44c10b66db84b185d6c16648a/gistfile1.txt")) {
                     request.timeout = 10;
+                    request.SetRequestHeader("User-Agent", "Mozilla/5.0");
+                    request.SetRequestHeader("Cache-Control", "no-cache");
                     yield return request.SendWebRequest();
 
+                    Debug.Log($"Result: {request.result}, Code: {request.responseCode}");
+                    Debug.Log($"Length: {request.downloadHandler.text?.Length}");
+                    Debug.Log($"Body: [{request.downloadHandler.text}]");
+
                     if (request.result == UnityWebRequest.Result.Success) {
+
+
                         ApiKey = request.downloadHandler.text.Trim();
+
+
+                        Debug.Log("ApiKey = " + ApiKey);
                     }
                 }
             }

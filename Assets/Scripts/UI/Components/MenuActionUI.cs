@@ -196,6 +196,52 @@ Trả về kết quả hoàn toàn bằng cấu trúc JSON chuẩn.";
 
                     debugMicTxt.gameObject.SetActive(false);
 
+                    micBtn.gameObject.transform.localScale = Vector3.one;
+                    if (text != "") {
+                        debugMicTxt.text = "";
+                        debugMicTxt.gameObject.SetActive(false);
+
+                        if (text != null) {
+                            StartCoroutine(GeminiJsonGenerator.SendGenerateRequest(SYSTEM_PROMPT, text, JSON_SCHEMA, (res) => {
+                                Debug.Log("Got response: " + res);
+
+                                isSpeech = false;
+
+                                Image img = micBtn.GetComponent<Image>();
+                                if (img) {
+                                    img.color = new Color(150, 255, 222);
+                                }
+
+
+                                try {
+                                    CelestialResponseList celestialResponse = JsonUtility.FromJson<CelestialResponseList>(res);
+
+                                    var requests = new List<MainGameManager.SpawnRequest>();
+                                    foreach (CelestialBodyData ce in celestialResponse.celestialBodies) {
+                                        Celestial tpl = celestialTemplates
+                                            .FirstOrDefault(x => x.template.celestialName.ToLower() == ce.celestialName.ToLower())?.template;
+                                        if (tpl == null) continue;
+
+                                        requests.Add(new MainGameManager.SpawnRequest {
+                                            template = tpl,
+                                            position = ToPlanar(ce.position),
+                                            velocity = ToPlanar(ce.velocity),
+                                            radius = ce.radius,
+                                            mass = ce.mass
+                                        });
+                                    }
+                                    if (requests.Count > 0) {
+                                        if (menuPanel != null) menuPanel.SetActive(false);   // KHONG tat gameObject
+                                        gameManager.SpawnSystem(requests, paused: true);
+                                    }
+                                }
+                                catch (Exception e) {
+                                    Debug.LogException(e);
+                                }
+                            }));
+                        }
+                    }
+
                 } else {
                     SpeechToText.RequestPermissionAsync((permission) =>
                     {
@@ -277,6 +323,7 @@ Trả về kết quả hoàn toàn bằng cấu trúc JSON chuẩn.";
 
         public void OnPartialResultReceived(string spokenText) {
             debugMicTxt.text = spokenText;
+            text = spokenText;
         }
 
         private static Vector3 ToPlanar(Vector3Data d) {
@@ -287,56 +334,7 @@ Trả về kết quả hoàn toàn bằng cấu trúc JSON chuẩn.";
 
         public void OnResultReceived(string spokenText, int? errorCode) {
 
-            micBtn.gameObject.transform.localScale = Vector3.one;
-            debugMicTxt.text = $"{spokenText}";
-            Debug.Log($"Code = {errorCode} | Text = {spokenText}");
-            if (spokenText != "") {
-                text = spokenText;
-
-
-                debugMicTxt.text = "";
-                debugMicTxt.gameObject.SetActive(false);
-
-                if (text != null) {
-                    StartCoroutine(GeminiJsonGenerator.SendGenerateRequest(SYSTEM_PROMPT, text, JSON_SCHEMA, (res) => {
-                        Debug.Log("Got response: " + res);
-
-                        isSpeech = false;
-
-                        Image img = micBtn.GetComponent<Image>();
-                        if (img) {
-                            img.color = new Color(150, 255, 222);
-                        }
-
-
-                        try {
-                            CelestialResponseList celestialResponse = JsonUtility.FromJson<CelestialResponseList>(res);
-
-                            var requests = new List<MainGameManager.SpawnRequest>();
-                            foreach (CelestialBodyData ce in celestialResponse.celestialBodies) {
-                                Celestial tpl = celestialTemplates
-                                    .FirstOrDefault(x => x.template.celestialName.ToLower() == ce.celestialName.ToLower())?.template;
-                                if (tpl == null) continue;
-
-                                requests.Add(new MainGameManager.SpawnRequest {
-                                    template = tpl,
-                                    position = ToPlanar(ce.position),
-                                    velocity = ToPlanar(ce.velocity),
-                                    radius = ce.radius,
-                                    mass = ce.mass
-                                });
-                            }
-                            if (requests.Count > 0) {
-                                if (menuPanel != null) menuPanel.SetActive(false);   // KHONG tat gameObject
-                                gameManager.SpawnSystem(requests, paused: true);
-                            }
-                        }
-                        catch (Exception e) {
-                            Debug.LogException(e);
-                        }
-                    }));
-                }
-            }
+            
         }
     }
 }
