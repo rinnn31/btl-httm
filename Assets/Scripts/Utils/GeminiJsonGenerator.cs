@@ -6,7 +6,7 @@ using System;
 
 namespace UniverseSimAR.Utils {
     public class GeminiJsonGenerator {
-        private static string apiKey = "AQ.Ab8RN6LVZ8iVeqlrIDxjBVPRsb_sm5aI67sHabpGq9X2w1yNJQ";
+        private static string apiKey = "AQ.Ab8RN6JzDPMuz0_8hmuo0kj8uAzw3atHn3ihUxAcozbrXHulIw";
         private static string model = "gemini-3.1-flash-lite";
 
         public static IEnumerator SendGenerateRequest(string systemInstruction, string userPrompt, string jsonSchema, Action<string> callback) {

@@ -22,10 +22,20 @@ namespace UniverseSimAR.Input {
         /// Danh sach/landmark la buffer dung lai -> chi doc dong bo trong handler.</summary>
         public event Action<List<List<NormalizedLandmark>>> HandsDetected;
         private readonly List<List<NormalizedLandmark>> allHands = new List<List<NormalizedLandmark>>(2);
+        private readonly List<List<Landmark>> allHandsWorld = new List<List<Landmark>>(2);
+        /// <summary>Song song voi HandsDetected: landmark 3D theo met (goc o tam ban tay).</summary>
+        public IReadOnlyList<List<Landmark>> HandsWorld => allHandsWorld;
+
         private Vector2 lastPrimaryWrist;
         private bool hasPrimary;
 
         private ARCameraManager cameraManager;
+        [Tooltip("Camera sau (AR) khong lat guong nen MediaPipe tra nhan Left/Right bi dao. Bat = dao lai cho dung tay that.")]
+        public bool swapHandedness = true;
+
+        private readonly List<bool> allHandsIsLeft = new List<bool>(2);
+        /// <summary>Song song voi danh sach HandsDetected: true = tay trai. Chi doc dong bo trong handler.</summary>
+        public IReadOnlyList<bool> HandsIsLeft => allHandsIsLeft;
 
         [Header("Model")]
         [Tooltip("Model Filename")]
@@ -62,7 +72,16 @@ namespace UniverseSimAR.Input {
 
         }
 
-
+        private bool ReadIsLeft(int i) {
+            bool isLeft = false;
+            if (result.handedness != null && i < result.handedness.Count) {
+                var cats = result.handedness[i].categories;
+                if (cats != null && cats.Count > 0) {
+                    isLeft = cats[0].categoryName == "Left";
+                }
+            }
+            return swapHandedness ? !isLeft : isLeft;
+        }
         private IEnumerator Start() {
             string modelPath = Path.Combine(Application.persistentDataPath, modelFileName);
 
@@ -182,10 +201,20 @@ namespace UniverseSimAR.Input {
             bool ok = landmarker.TryDetectForVideo(image, ts, null, ref result);
 
             allHands.Clear();
+            allHandsIsLeft.Clear();
+            allHandsWorld.Clear();
             if (ok && result.handLandmarks != null) {
                 for (int i = 0; i < result.handLandmarks.Count; i++) {
                     var l = result.handLandmarks[i].landmarks;
-                    if (l != null && l.Count >= 21) allHands.Add(l);
+                    if (l == null || l.Count < 21) continue;
+                    allHands.Add(l);
+                    allHandsIsLeft.Add(ReadIsLeft(i));
+
+                    List<Landmark> wl = null;
+                    if (result.handWorldLandmarks != null && i < result.handWorldLandmarks.Count) {
+                        wl = result.handWorldLandmarks[i].landmarks;
+                    }
+                    allHandsWorld.Add(wl);
                 }
             }
             HandsDetected?.Invoke(allHands);

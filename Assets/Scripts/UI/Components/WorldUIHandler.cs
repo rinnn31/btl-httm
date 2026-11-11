@@ -41,8 +41,6 @@ namespace UniverseSimAR.UI.Components {
         }
 
         public bool HandlePointerDown(Vector2 screenPosition) {
-
-            Debug.Log($"Down pos: {screenPosition.x} {screenPosition.y}");
             if (EventSystem.current == null) return false;
             EnsureCanvasCameras();
 

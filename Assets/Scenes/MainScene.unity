@@ -3813,6 +3813,12 @@ MonoBehaviour:
   fistOpenRatio: 1.4
   minFistSeconds: 0.1
   maxFistSeconds: 3
+  detectClap: 1
+  clapCloseRatio: 0.8
+  clapOpenRatio: 1.6
+  clapCooldown: 0.5
+  clapLostWindow: 0.25
+  clapLostRatio: 1.4
   gestureConfirmFrames: 1
   lostHandFramesThreshold: 8
   moveDeadZone: 1
@@ -3834,6 +3840,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 28689a393e36c404ab45e4195f6d362d, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::UniverseSimAR.Interaction.HandTracker
+  swapHandedness: 1
   modelFileName: hand_landmarker.bytes
   useGpu: 1
   targetLongSide: 320
@@ -3866,34 +3873,11 @@ MonoBehaviour:
   labelCharacterSize: 0.02
   labelColor: {r: 1, g: 1, b: 1, a: 1}
   startInSpaceMode: 0
-  spaceSkyboxImage: {fileID: 0}
+  spaceSkyboxImage: {fileID: 2800000, guid: 7bd4a2066be28594ab0f547df6618c59, type: 3}
   spaceBackgroundColor: {r: 0, g: 0, b: 0, a: 1}
   starCount: 1500
-  handModelRoot: {fileID: 1047571610}
+  handModelRoot: {fileID: 1742055514}
   handModelBones:
-  - {fileID: 1047571609}
-  - {fileID: 1047571608}
-  - {fileID: 1047571607}
-  - {fileID: 1047571606}
-  - {fileID: 1047571605}
-  - {fileID: 1047571604}
-  - {fileID: 1047571603}
-  - {fileID: 1047571602}
-  - {fileID: 1047571601}
-  - {fileID: 1047571600}
-  - {fileID: 1047571599}
-  - {fileID: 1047571598}
-  - {fileID: 1047571597}
-  - {fileID: 1047571596}
-  - {fileID: 1047571595}
-  - {fileID: 1047571594}
-  - {fileID: 1047571593}
-  - {fileID: 1047571592}
-  - {fileID: 1047571591}
-  - {fileID: 1047571590}
-  - {fileID: 1047571589}
-  handModelRootABC: {fileID: 1742055514}
-  handModelBonesABC:
   - {fileID: 1742055513}
   - {fileID: 1742055512}
   - {fileID: 1742055511}
@@ -3915,6 +3899,29 @@ MonoBehaviour:
   - {fileID: 1742055495}
   - {fileID: 1742055494}
   - {fileID: 1742055493}
+  handModelRootABC: {fileID: 1047571610}
+  handModelBonesABC:
+  - {fileID: 1047571609}
+  - {fileID: 1047571608}
+  - {fileID: 1047571607}
+  - {fileID: 1047571606}
+  - {fileID: 1047571605}
+  - {fileID: 1047571604}
+  - {fileID: 1047571603}
+  - {fileID: 1047571602}
+  - {fileID: 1047571601}
+  - {fileID: 1047571600}
+  - {fileID: 1047571599}
+  - {fileID: 1047571598}
+  - {fileID: 1047571597}
+  - {fileID: 1047571596}
+  - {fileID: 1047571595}
+  - {fileID: 1047571594}
+  - {fileID: 1047571593}
+  - {fileID: 1047571592}
+  - {fileID: 1047571591}
+  - {fileID: 1047571590}
+  - {fileID: 1047571589}
   handDepth: 0.6
   handZScale: 0.5
   handSmoothing: 20
@@ -4605,15 +4612,15 @@ PrefabInstance:
   serializedVersion: 2
   m_Modification:
     serializedVersion: 3
-    m_TransformParent: {fileID: 0}
+    m_TransformParent: {fileID: 1927667995}
     m_Modifications:
     - target: {fileID: -8679921383154817045, guid: 10519b7f92cb2254dab247c1e16dc897, type: 3}
       propertyPath: m_LocalPosition.x
-      value: 543.93756
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: 10519b7f92cb2254dab247c1e16dc897, type: 3}
       propertyPath: m_LocalPosition.y
-      value: 247.33234
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: 10519b7f92cb2254dab247c1e16dc897, type: 3}
       propertyPath: m_LocalPosition.z
@@ -4625,15 +4632,15 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: 10519b7f92cb2254dab247c1e16dc897, type: 3}
       propertyPath: m_LocalRotation.x
-      value: 0
+      value: -0
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: 10519b7f92cb2254dab247c1e16dc897, type: 3}
       propertyPath: m_LocalRotation.y
-      value: 0
+      value: -0
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: 10519b7f92cb2254dab247c1e16dc897, type: 3}
       propertyPath: m_LocalRotation.z
-      value: 0
+      value: -0
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: 10519b7f92cb2254dab247c1e16dc897, type: 3}
       propertyPath: m_LocalEulerAnglesHint.x
@@ -4649,11 +4656,11 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: -7867531621627606992, guid: 10519b7f92cb2254dab247c1e16dc897, type: 3}
       propertyPath: m_IsActive
-      value: 0
+      value: 1
       objectReference: {fileID: 0}
     - target: {fileID: 539575187038654664, guid: 10519b7f92cb2254dab247c1e16dc897, type: 3}
       propertyPath: m_IsActive
-      value: 0
+      value: 1
       objectReference: {fileID: 0}
     - target: {fileID: 919132149155446097, guid: 10519b7f92cb2254dab247c1e16dc897, type: 3}
       propertyPath: m_Name
@@ -6252,6 +6259,11 @@ MonoBehaviour:
   m_ShadowLayerMask: 1
   m_RenderingLayers: 1
   m_ShadowRenderingLayers: 1
+--- !u!4 &1348448026 stripped
+Transform:
+  m_CorrespondingSourceObject: {fileID: -8679921383154817045, guid: 10519b7f92cb2254dab247c1e16dc897, type: 3}
+  m_PrefabInstance: {fileID: 1047571588}
+  m_PrefabAsset: {fileID: 0}
 --- !u!1 &1356095045
 GameObject:
   m_ObjectHideFlags: 0
@@ -9802,6 +9814,7 @@ Transform:
   - {fileID: 2138336958}
   - {fileID: 1925954079}
   - {fileID: 1465834986}
+  - {fileID: 1348448026}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!114 &1927667996
@@ -10994,4 +11007,3 @@ SceneRoots:
   - {fileID: 1133546866}
   - {fileID: 1927667995}
   - {fileID: 1356095048}
-  - {fileID: 1047571588}

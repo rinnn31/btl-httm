@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Linq;
 using TMPro;
 using UnityEngine;
@@ -42,14 +43,14 @@ namespace UniverseSimAR.UI.Components {
     public class MenuActionUI : MonoBehaviour, ISpeechToTextListener {
         public static MenuActionUI Instance { get; private set; }
 
-        private static string SYSTEM_PROMPT = @"Bạn là bộ xử lý ngôn ngữ tự nhiên thông minh cho ứng dụng mô phỏng không gian Unity. Nhiệm vụ của bạn là lắng nghe và phân tích câu lệnh giọng nói của người dùng để tạo ra danh sách các thiên thể theo đúng yêu cầu.
+        private static string SYSTEM_PROMPT = @"Bạn là bộ xử lý ngôn ngữ tự nhiên thông minh cho ứng dụng mô phỏng không gian Unity. Nhiệm vụ của bạn là lắng nghe và phân tích câu lệnh giọng nói của người dùng để tạo ra danh sách các thiên thể theo đúng yêu cầu. Nếu yêu cầu trống hoặc không liên quan, hãy trả về danh sách trống
 Quy tắc giới hạn tham số:
 1. Khối lượng (mass): từ 0.00004 (Mặt Trăng) đến 0.5 (5 lần Mặt Trời).
 2. Bán kính (radius): từ 0.01 (Mặt Trăng) đến 0.15 (2.5 lần Mặt Trời).
 3. Vị trí (position - x, y, z): Tọa độ 3D hợp lý xung quanh tâm mô phỏng.
 4. Vận tốc (velocity - x, y, z): Phù hợp điều kiện G = 100 (dao động trong khoảng -15 đến 15).
 5. Các thiên thể cho phép: Trái Đất, Mặt Trăng, Mặt Trời, Sao Hỏa, Sao Kim, Sao Thủy, Sao Mộc, Sao Thổ, Sao Thiên Vương, Sao Hải Vương, Sao Diêm Vương.
-6. Yêu cầu các thiên thể nằm trên một mặt phẳng (z = 0) và không chồng lấn nhau.
+6. Yêu cầu các thiên thể nằm trên một mặt phẳng nằm ngang (y = 0, dùng x và z để trải ra) và không chồng lấn nhau.
 Trả về kết quả hoàn toàn bằng cấu trúc JSON chuẩn.";
 
         private static string JSON_SCHEMA = @"{
@@ -260,39 +261,59 @@ Trả về kết quả hoàn toàn bằng cấu trúc JSON chuẩn.";
             debugMicTxt.text = spokenText;
         }
 
+        private static Vector3 ToPlanar(Vector3Data d) {
+            if (Mathf.Abs(d.z) < 1e-4f && Mathf.Abs(d.y) > 1e-4f) return new Vector3(d.x, 0f, d.y);
+            return new Vector3(d.x, 0f, d.z);
+        }
+
+
         public void OnResultReceived(string spokenText, int? errorCode) {
 
             micBtn.gameObject.transform.localScale = Vector3.one;
-            debugMicTxt.text = $"[{errorCode}] {spokenText}";
+            debugMicTxt.text = $"{spokenText}";
             Debug.Log($"Code = {errorCode} | Text = {spokenText}");
-            if (errorCode == 0) {
+            if (spokenText != "") {
                 text = spokenText;
 
                 if (text != null) {
                     StartCoroutine(GeminiJsonGenerator.SendGenerateRequest(SYSTEM_PROMPT, text, JSON_SCHEMA, (res) => {
                         Debug.Log("Got response: " + res);
+
+                        isSpeech = false;
+
+                        Image img = micBtn.GetComponent<Image>();
+                        if (img) {
+                            img.color = new Color(150, 255, 222);
+                        }
+
+                        debugMicTxt.text = "";
+                        debugMicTxt.gameObject.SetActive(false);
+
                         try {
                             CelestialResponseList celestialResponse = JsonUtility.FromJson<CelestialResponseList>(res);
 
-                            gameManager.ResetGame();
-                            gameManager.TogglePause(true);
-                            gameObject.SetActive(false);
-
+                            var requests = new List<MainGameManager.SpawnRequest>();
                             foreach (CelestialBodyData ce in celestialResponse.celestialBodies) {
-                                Celestial celestial = celestialTemplates.Where(x => x.template.celestialName.ToLower() == ce.celestialName.ToLower()).FirstOrDefault()?.template;
-                                if (celestial !=  null) {
-                                    gameManager.AddCelestial(
-                                        celestial,
-                                        new Vector3(ce.position.x, ce.position.y, ce.position.z),
-                                        new Vector3(ce.velocity.x, ce.velocity.y, ce.velocity.z),
-                                        ce.radius,
-                                        ce.mass);
-                                }
+                                Celestial tpl = celestialTemplates
+                                    .FirstOrDefault(x => x.template.celestialName.ToLower() == ce.celestialName.ToLower())?.template;
+                                if (tpl == null) continue;
+
+                                requests.Add(new MainGameManager.SpawnRequest {
+                                    template = tpl,
+                                    position = ToPlanar(ce.position),
+                                    velocity = ToPlanar(ce.velocity),
+                                    radius = ce.radius,
+                                    mass = ce.mass
+                                });
                             }
-                        } catch (Exception e) {
+                            if (requests.Count > 0) {
+                                if (menuPanel != null) menuPanel.SetActive(false);   // KHONG tat gameObject
+                                gameManager.SpawnSystem(requests, paused: true);
+                            }
+                        }
+                        catch (Exception e) {
                             Debug.LogException(e);
                         }
-
                     }));
                 }
             }

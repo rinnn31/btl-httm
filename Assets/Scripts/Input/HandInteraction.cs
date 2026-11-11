@@ -26,6 +26,20 @@ namespace UniverseSimAR.Input {
         [Tooltip("Nam tay qua lau (giay) thi bo qua, khong ban select. 0 = khong gioi han.")]
         public float maxFistSeconds = 3f;
 
+        [Header("Clap Settings")]
+        [Tooltip("Bat/tat detect vo tay (can 2 tay trong khung hinh).")]
+        public bool detectClap = true;
+        [Tooltip("Khoang cach giua 2 long ban tay / kich thuoc ban tay. Nho hon gia tri nay = 2 tay cham nhau (vo).")]
+        public float clapCloseRatio = 0.8f;
+        [Tooltip("Phai tach 2 tay xa hon gia tri nay thi moi duoc vo lan tiep (hysteresis, > clapCloseRatio).")]
+        public float clapOpenRatio = 1.6f;
+        [Tooltip("Thoi gian toi thieu (giay) giua 2 lan vo tay.")]
+        public float clapCooldown = 0.5f;
+        [Tooltip("MediaPipe hay mat 1 tay khi 2 tay chong len nhau. Neu 2 tay dang rat gan roi 1 tay bien mat trong khoang nay (giay) thi van tinh la vo.")]
+        public float clapLostWindow = 0.25f;
+        [Tooltip("Nguong khoang cach de tinh 'vo' khi mat 1 tay (dung cho truong hop bi che).")]
+        public float clapLostRatio = 1.4f;
+
         [Header("System Settings")]
         public int gestureConfirmFrames = 2;
         public int lostHandFramesThreshold = 8;
@@ -58,7 +72,15 @@ namespace UniverseSimAR.Input {
 
         private bool isFistRaw = false;
         private float fistStartTime = 0f;
-        private Vector2 fistPos = Vector2.zero; 
+        private Vector2 fistPos = Vector2.zero;
+
+        // Clap state
+        private bool clapArmed = false;          // da tach 2 tay du xa -> san sang vo
+        private bool hadTwoHands = false;
+        private float lastTwoHandsTime = -10f;
+        private float lastClapRatio = float.MaxValue;
+        private Vector2 lastClapMid = Vector2.zero;
+        private float lastClapTime = -10f;
 
         private void Awake() {
             handTracker = GetComponent<HandTracker>();
@@ -69,11 +91,14 @@ namespace UniverseSimAR.Input {
         private void OnEnable() {
             handTracker.HandDetected += HandTracker_HandDetected;
             handTracker.HandLost += HandleHandLost;
+            handTracker.HandsDetected += HandTracker_HandsDetected;
         }
 
         private void OnDisable() {
             handTracker.HandDetected -= HandTracker_HandDetected;
             handTracker.HandLost -= HandleHandLost;
+            handTracker.HandsDetected -= HandTracker_HandsDetected;
+            ResetClap();
             if (mouseState == MouseButtonState.DOWN) MouseUp();
         }
 
@@ -84,6 +109,73 @@ namespace UniverseSimAR.Input {
         private void HandTracker_HandDetected(System.Collections.Generic.List<Mediapipe.Tasks.Components.Containers.NormalizedLandmark> obj) {
             if (obj == null || obj.Count < 21) return;
             ProcessHandData(obj);
+        }
+
+        // ---------------- CLAP ----------------
+
+        private void ResetClap() {
+            clapArmed = false;
+            hadTwoHands = false;
+            lastClapRatio = float.MaxValue;
+        }
+
+        private Vector3 PalmCenter(System.Collections.Generic.List<Mediapipe.Tasks.Components.Containers.NormalizedLandmark> l) {
+            return (P(l, 0) + P(l, 5) + P(l, 9) + P(l, 17)) * 0.25f;
+        }
+
+        private float PalmSize(System.Collections.Generic.List<Mediapipe.Tasks.Components.Containers.NormalizedLandmark> l) {
+            return GetRobustPalmSize(P(l, 0), P(l, 5), P(l, 9), P(l, 17));
+        }
+
+        private void FireClap(Vector2 pos) {
+            if (Time.time - lastClapTime < clapCooldown) return;
+            lastClapTime = Time.time;
+            clapArmed = false;
+            lastClapRatio = float.MaxValue;
+            hadTwoHands = false;
+            onEvent.Invoke("clapped", pos);
+        }
+
+        // Duoc goi moi lan detect voi TAT CA cac tay (buffer dung lai -> chi doc dong bo).
+        private void HandTracker_HandsDetected(System.Collections.Generic.List<System.Collections.Generic.List<Mediapipe.Tasks.Components.Containers.NormalizedLandmark>> hands) {
+            if (!detectClap) return;
+
+            if (hands != null && hands.Count >= 2) {
+                var a = hands[0];
+                var b = hands[1];
+                Vector3 ca = PalmCenter(a);
+                Vector3 cb = PalmCenter(b);
+                float size = Mathf.Max(0.0001f, (PalmSize(a) + PalmSize(b)) * 0.5f);
+                float ratio = Distance2D(ca, cb) / size;
+                Vector2 mid = ToScreen((ca + cb) * 0.5f);
+
+                if (ratio >= clapOpenRatio) clapArmed = true;
+
+                if (clapArmed && ratio <= clapCloseRatio) {
+                    FireClap(mid);
+                    return;
+                }
+
+                hadTwoHands = true;
+                lastTwoHandsTime = Time.time;
+                lastClapRatio = ratio;
+                lastClapMid = mid;
+                return;
+            }
+
+            // Con <2 tay: co the 2 tay vua cham/che nhau lam mat detect 1 tay
+            if (hadTwoHands && clapArmed
+                && Time.time - lastTwoHandsTime <= clapLostWindow
+                && lastClapRatio <= clapLostRatio) {
+                FireClap(lastClapMid);
+                return;
+            }
+
+            if (Time.time - lastTwoHandsTime > clapLostWindow) {
+                hadTwoHands = false;
+                // khong thay du 2 tay lau -> phai tach tay ra lai moi duoc vo tiep
+                clapArmed = false;
+            }
         }
 
         private float Distance2D(Vector3 p1, Vector3 p2) {
@@ -150,7 +242,6 @@ namespace UniverseSimAR.Input {
 
             GestureState gesture = DetectGesture(smoothedPinchRatio);
 
-            Debug.Log($"[Hand] Pinch = {smoothedPinchRatio:F2} | Curl = {smoothedCurlRatio:F2} | state = {gesture}");
             UpdateGesture(gesture);
         }
 
