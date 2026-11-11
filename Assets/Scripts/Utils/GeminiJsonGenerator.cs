@@ -11,7 +11,7 @@ namespace UniverseSimAR.Utils {
 
         public static IEnumerator SendGenerateRequest(string systemInstruction, string userPrompt, string jsonSchema, Action<string> callback) {
             if (string.IsNullOrEmpty(ApiKey)) {
-                using (UnityWebRequest request = UnityWebRequest.Get("https://gist.githubusercontent.com/rinnn31/595160e51e20937936e5654810cc0ce6/raw/3674c1589145c8e44c10b66db84b185d6c16648a/gistfile1.txt")) {
+                using (UnityWebRequest request = UnityWebRequest.Get("https://gist.githubusercontent.com/rinnn31/595160e51e20937936e5654810cc0ce6/raw/b1bd877c9bfdef12fd5b2413c1cf265e5625ebf5/gistfile1.txt")) {
                     request.timeout = 10;
                     request.SetRequestHeader("User-Agent", "Mozilla/5.0");
                     request.SetRequestHeader("Cache-Control", "no-cache");
