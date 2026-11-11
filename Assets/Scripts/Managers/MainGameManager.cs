@@ -43,15 +43,6 @@ namespace UniverseSimAR.Managers {
         public Color spaceBackgroundColor = Color.black;
         public int starCount = 1500;
 
-        [Header("Virtual Hand 3D (hien khi Space Mode, toi da 2 tay)")]
-        [Tooltip("TAY 1: object goc cua mo hinh ban tay 3D (dat san trong scene, se tu dong an luc dau).")]
-        public Transform handModelRoot;
-        [Tooltip("TAY 1: 21 khop theo thu tu MediaPipe: 0 Wrist | 1-4 Thumb CMC,MCP,IP,Tip | 5-8 Index MCP,PIP,DIP,Tip | 9-12 Middle | 13-16 Ring | 17-20 Pinky. Bat buoc: 0,5,9,17. Tip (4,8,12,16,20) nen gan bone 'end' cua rig.")]
-        public Transform[] handModelBones = new Transform[21];
-        [Tooltip("TAY 2 (tuy chon): de trong thi chi render 1 tay. Co the dung prefab tay thu 2 (nen la ban lat guong neu can).")]
-        public Transform handModelRootABC;
-        [Tooltip("TAY 2: 21 khop, cung thu tu nhu TAY 1.")]
-        public Transform[] handModelBonesABC = new Transform[21];
         [Tooltip("Khoang cach (m) tu camera toi ban tay.")]
         public float handDepth = 0.6f;
         [Tooltip("He so landmark.z -> do sau (m). Am = gan camera hon.")]
@@ -65,6 +56,14 @@ namespace UniverseSimAR.Managers {
         public bool useEstimatedDepth = true;
         [Tooltip("Dao dau truc z cua world landmark neu ban tay bi lat nguoc khi xoay.")]
         public bool flipWorldZ = false;
+
+        [Header("Hand Skeleton (ve bone thay model 3D)")]
+        public Color leftHandColor = new Color(0.45f, 0.85f, 1f, 1f);
+        public Color rightHandColor = new Color(0.45f, 0.85f, 1f, 1f);
+        [Tooltip("Do day ngon tay (m) khi ban tay dai ~9cm. Tu scale theo kich thuoc ban tay.")]
+        public float fingerWidth = 0.016f;
+        public float palmWidth = 0.024f;
+        private Material handMat;
 
         private static readonly int[] PalmIdx = { 5, 9, 17 };
 
@@ -121,10 +120,13 @@ namespace UniverseSimAR.Managers {
         private Color savedBackgroundColor;
         private Material savedSkybox;
         private bool savedBgEnabled;
+        private Matrix4x4 savedProjectionMatrix;
         private Material spaceSkyboxMat;
         private Transform starRoot;
         private Texture2D starTex;
         private Material starMat;
+        private Skybox camSkybox;
+        private ParticleSystemRenderer starRenderer;
 
         private HandTracker handTracker;
         private class HandState {
@@ -136,14 +138,32 @@ namespace UniverseSimAR.Managers {
             public int lostFrames;
             public float restPalmLen = 1f;
             public Vector3 baseScale = Vector3.one;
+            public Quaternion baseRootRotation = Quaternion.identity;
+            public Quaternion bindPalmFrame = Quaternion.identity;
+            public readonly Quaternion[] bindLocalRotations = new Quaternion[21];
             public readonly Vector3[] target = new Vector3[21];   // khong gian camera
             public readonly Vector3[] current = new Vector3[21];
             public readonly Vector3[] world = new Vector3[21];
+
+            public GameObject go;
+            public LineRenderer[] fingers = new LineRenderer[5];
+            public LineRenderer palm;
         }
+
+        private static readonly int[][] FingerChains = {
+    new[] { 0, 1, 2, 3, 4 },      // cai
+    new[] { 0, 5, 6, 7, 8 },      // tro
+    new[] { 0, 9, 10, 11, 12 },   // giua
+    new[] { 0, 13, 14, 15, 16 },  // ap ut
+    new[] { 0, 17, 18, 19, 20 },  // ut
+};
+        private static readonly int[] PalmLoop = { 0, 1, 5, 9, 13, 17, 0 };
+
         private readonly HandState[] handStates = { new HandState(), new HandState() };
         private readonly Vector3[][] handTemp = { new Vector3[21], new Vector3[21] };
         private readonly int[] handDetForSlot = { -1, -1 };
         private static readonly int[] HandSolveOrder = { 1, 2, 3, 5, 6, 7, 9, 10, 11, 13, 14, 15, 17, 18, 19 };
+        private static readonly int[] FingerTips = { 4, 8, 12, 16, 20 };
 
         private void Awake() {
             if (Instance != null && Instance != this) {
@@ -151,6 +171,18 @@ namespace UniverseSimAR.Managers {
             } else {
                 Instance = this;
             }
+        }
+
+        [Header("Hand Alignment")]
+        [Tooltip("Chinh tay neu van lech (don vi viewport, 0.05 = 5% man hinh). +x sang phai, +y len tren.")]
+        public Vector2 handScreenOffset = Vector2.zero;
+        [Tooltip("Phong/thu quanh tam man hinh neu tay lech tang dan ra xa tam.")]
+        public float handScreenScale = 1f;
+
+        private Vector3 CameraLocalAtDepth1(NormalizedLandmark p) {
+            Vector3 world = mainCamera.ViewportToWorldPoint(
+                new Vector3(p.x + handScreenOffset.x, 1f - p.y + handScreenOffset.y, 1f));
+            return mainCamera.transform.InverseTransformPoint(world);
         }
 
         private void OnArFrame(ARCameraFrameEventArgs args) {
@@ -270,9 +302,7 @@ namespace UniverseSimAR.Managers {
 
         public void SetSpaceMode(bool on) {
             EnsureMainCamera();
-            if (mainCamera == null || on == isSpaceMode) {
-                return;
-            }
+            if (mainCamera == null || on == isSpaceMode) return;
 
             if (on) {
                 if (arCameraBackground == null) {
@@ -281,15 +311,9 @@ namespace UniverseSimAR.Managers {
 
                 savedClearFlags = mainCamera.clearFlags;
                 savedBackgroundColor = mainCamera.backgroundColor;
-                savedSkybox = RenderSettings.skybox;
                 savedBgEnabled = arCameraBackground != null && arCameraBackground.enabled;
 
                 if (!hasArProjection) { lastArProjection = mainCamera.projectionMatrix; hasArProjection = true; }
-
-                if (arCameraBackground != null) {
-                    arCameraBackground.enabled = false;
-                }
-                mainCamera.projectionMatrix = lastArProjection;
 
                 if (spaceSkyboxImage != null && spaceSkyboxMat == null) {
                     Shader sh = Shader.Find("Skybox/Panoramic");
@@ -298,34 +322,47 @@ namespace UniverseSimAR.Managers {
                         spaceSkyboxMat.SetTexture("_MainTex", spaceSkyboxImage);
                     }
                 }
+                if (spaceSkyboxMat == null && starRoot == null) BuildStarField();
 
-                if (spaceSkyboxMat != null) {
-                    RenderSettings.skybox = spaceSkyboxMat;
-                    mainCamera.clearFlags = CameraClearFlags.Skybox;
-                } else {
-                    mainCamera.clearFlags = CameraClearFlags.SolidColor;
-                    mainCamera.backgroundColor = spaceBackgroundColor;
-                    if (starRoot == null) {
-                        BuildStarField();
-                    }
-                    starRoot.gameObject.SetActive(true);
-                }
+                isSpaceMode = true;          // dat truoc de ApplySpaceBackground hoat dong
+                ApplySpaceBackground();
+                mainCamera.projectionMatrix = lastArProjection;
             } else {
-                mainCamera.clearFlags = savedClearFlags;
-                mainCamera.backgroundColor = savedBackgroundColor;
-                RenderSettings.skybox = savedSkybox;
+                isSpaceMode = false;
                 HideVirtualHand();
 
+                if (camSkybox != null) camSkybox.enabled = false;
+                if (starRenderer != null) starRenderer.enabled = false;
+
+                mainCamera.clearFlags = savedClearFlags;
+                mainCamera.backgroundColor = savedBackgroundColor;
                 mainCamera.ResetProjectionMatrix();
-                if (arCameraBackground != null) {
-                    arCameraBackground.enabled = savedBgEnabled;
-                }
-                if (starRoot != null) {
-                    starRoot.gameObject.SetActive(false);
-                }
+                if (arCameraBackground != null) arCameraBackground.enabled = savedBgEnabled;
+            }
+        }
+
+        private void ApplySpaceBackground() {
+            if (mainCamera == null) return;
+
+            // ARCameraBackground co the tu bat lai -> ep tat khi dang o Space Mode
+            if (arCameraBackground != null && arCameraBackground.enabled) {
+                arCameraBackground.enabled = false;
             }
 
-            isSpaceMode = on;
+            if (spaceSkyboxMat != null) {
+                // Skybox gan thang vao camera: khong phu thuoc RenderSettings
+                if (camSkybox == null) {
+                    camSkybox = mainCamera.GetComponent<Skybox>();
+                    if (camSkybox == null) camSkybox = mainCamera.gameObject.AddComponent<Skybox>();
+                }
+                if (camSkybox.material != spaceSkyboxMat) camSkybox.material = spaceSkyboxMat;
+                if (!camSkybox.enabled) camSkybox.enabled = true;
+                mainCamera.clearFlags = CameraClearFlags.Skybox;
+            } else {
+                mainCamera.clearFlags = CameraClearFlags.SolidColor;
+                mainCamera.backgroundColor = spaceBackgroundColor;
+                if (starRenderer != null && !starRenderer.enabled) starRenderer.enabled = true;
+            }
         }
 
         private void BuildStarField() {
@@ -365,6 +402,7 @@ namespace UniverseSimAR.Managers {
             starMat.mainTexture = starTex;
 
             var psr = go.GetComponent<ParticleSystemRenderer>();
+            starRenderer = psr;
             psr.renderMode = ParticleSystemRenderMode.Billboard;
             psr.sharedMaterial = starMat;
             psr.minParticleSize = 0f;
@@ -384,48 +422,51 @@ namespace UniverseSimAR.Managers {
             }
             ps.Pause(true);
 
-            go.SetActive(false);
+            psr.enabled = false;
         }
 
         // ===================== VIRTUAL HAND 3D (toi da 2 tay) =====================
         // Mo hinh co xuong (rig) duoc dieu khien bang landmark MediaPipe:
         // moi xuong duoc xoay sao cho huong "khop -> khop ke tiep" trung voi huong landmark.
         private void SetupHandModel() {
-            SetupHandState(handStates[0], handModelRoot, handModelBones);
-            SetupHandState(handStates[1], handModelRootABC, handModelBonesABC);
+            if (handMat == null) {
+                Shader sh = Shader.Find("Sprites/Default");
+                handMat = new Material(sh != null ? sh : Shader.Find("Hidden/InternalErrorShader"));
+            }
+            BuildHandSkeleton(handStates[0], "HandSkeleton_Left", leftHandColor);
+            BuildHandSkeleton(handStates[1], "HandSkeleton_Right", rightHandColor);
         }
 
-        private void SetupHandState(HandState st, Transform root, Transform[] bones) {
-            st.ready = false;
+        private LineRenderer MakeHandLine(Transform parent, string name, int count, Color color) {
+            var go = new GameObject(name);
+            go.transform.SetParent(parent, false);
+            var lr = go.AddComponent<LineRenderer>();
+            lr.sharedMaterial = handMat;
+            lr.useWorldSpace = true;
+            lr.positionCount = count;
+            lr.numCapVertices = 8;       // dau tron
+            lr.numCornerVertices = 8;    // khop tron
+            lr.alignment = LineAlignment.View;
+            lr.startColor = color;
+            lr.endColor = color;
+            lr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            lr.receiveShadows = false;
+            return lr;
+        }
+
+        private void BuildHandSkeleton(HandState st, string name, Color color) {
+            st.go = new GameObject(name);
+            for (int f = 0; f < 5; f++) {
+                st.fingers[f] = MakeHandLine(st.go.transform, "Finger" + f, FingerChains[f].Length, color);
+            }
+            st.palm = MakeHandLine(st.go.transform, "Palm", PalmLoop.Length, color);
+            st.go.SetActive(false);
             st.visible = false;
             st.hasPose = false;
             st.lostFrames = 0;
-            st.root = root;
-            st.bones = bones;
-
-            if (root == null || bones == null || bones.Length < 21) return;
-            if (bones[0] == null || bones[5] == null || bones[9] == null || bones[17] == null) {
-                Debug.LogWarning($"[MainGameManager] Hand model '{root.name}' thieu bone bat buoc (0, 5, 9, 17).");
-                return;
-            }
-
-            // Animator nằm ở "Hands VR" (cha của root) nên phải tìm theo hướng lên trên
-            foreach (var a in root.GetComponentsInParent<Animator>(true)) a.enabled = false;
-            foreach (var c in root.GetComponentsInChildren<Collider>(true)) c.enabled = false;
-            foreach (var smr in root.root.GetComponentsInChildren<SkinnedMeshRenderer>(true)) {
-                smr.updateWhenOffscreen = true; // tránh mesh bị cull khi bone di chuyển
-            }
-
-            st.baseScale = root.localScale;
-            root.localScale = Vector3.zero;   // ẩn tay bằng scale 0
             st.ready = true;
         }
 
-        private Vector3 CameraLocalAtDepth1(NormalizedLandmark p) {
-            Vector3 world = mainCamera.ViewportToWorldPoint(
-                new Vector3(Mathf.Clamp01(p.x), Mathf.Clamp01(1f - p.y), 1f));
-            return mainCamera.transform.InverseTransformPoint(world);
-        }
 
         private void LandmarksToCameraLocal(List<NormalizedLandmark> lm, List<Landmark> wl, Vector3[] outLocal) {
             Vector3 r0 = CameraLocalAtDepth1(lm[0]);
@@ -446,11 +487,10 @@ namespace UniverseSimAR.Managers {
             Vector3 wrist = r0 * depth;               // co tay: lay vi tri tu man hinh
             float zSign = flipWorldZ ? -1f : 1f;
             for (int i = 0; i < 21; i++) {
-                // hinh dang ban tay: lay tu world landmark (met), y image huong xuong -> doi dau
-                outLocal[i] = wrist + new Vector3(
-                    wl[i].x - wl[0].x,
-                    -(wl[i].y - wl[0].y),
-                    (wl[i].z - wl[0].z) * zSign);
+                // Moi khop nam tren tia nhin cua chinh landmark do (khop voi diem pinch),
+                // do sau = do sau co tay + chenh lech z cua world landmark
+                float di = Mathf.Max(0.15f, depth + (wl[i].z - wl[0].z) * zSign);
+                outLocal[i] = CameraLocalAtDepth1(lm[i]) * di;
             }
         }
 
@@ -527,7 +567,7 @@ namespace UniverseSimAR.Managers {
                     }
                     if (!st.visible) {
                         st.visible = true;
-                        st.root.localScale = st.baseScale;   // thay cho SetActive(true)
+                        st.go.SetActive(true);
                     }
                 } else if (st.visible) {
                     st.lostFrames++;
@@ -542,7 +582,7 @@ namespace UniverseSimAR.Managers {
             st.visible = false;
             st.hasPose = false;
             st.lostFrames = 0;
-            if (st.root != null) st.root.localScale = Vector3.zero;
+            if (st.go != null) st.go.SetActive(false);
         }
 
         private void HideVirtualHand() {
@@ -563,13 +603,6 @@ namespace UniverseSimAR.Managers {
             }
         }
 
-        private static Quaternion HandFrame(Vector3 wrist, Vector3 index, Vector3 middle, Vector3 pinky) {
-            Vector3 fwd = middle - wrist;
-            Vector3 up = Vector3.Cross(fwd, pinky - index); // phap tuyen long ban tay
-            if (fwd.sqrMagnitude < 1e-10f || up.sqrMagnitude < 1e-10f) return Quaternion.identity;
-            return Quaternion.LookRotation(fwd, up);
-        }
-
         private void UpdateHandState(HandState st) {
             Transform cam = mainCamera.transform;
             float k = 1f - Mathf.Exp(-handSmoothing * Time.deltaTime);
@@ -578,53 +611,32 @@ namespace UniverseSimAR.Managers {
                 st.world[i] = cam.TransformPoint(st.current[i]);
             }
 
-            Transform[] bones = st.bones;
             Vector3[] w = st.world;
-            Transform root = st.root;
-            Transform wrist = bones[0];
 
-            // 1) Scale on dinh: trung binh do dai 3 doan co tay -> MCP (khong doi khi xoay)
-            float curLen = 0f, wantLen = 0f;
-            foreach (int i in PalmIdx) {
-                curLen += Vector3.Distance(bones[i].position, wrist.position);
-                wantLen += Vector3.Distance(w[i], w[0]);
+            // Do day scale theo kich thuoc ban tay (tay gan -> day hon)
+            float palmLen = Vector3.Distance(w[0], w[9]);
+            float s = Mathf.Clamp(palmLen / 0.09f, 0.3f, 3f);
+
+            for (int f = 0; f < 5; f++) {
+                var lr = st.fingers[f];
+                int[] chain = FingerChains[f];
+                for (int j = 0; j < chain.Length; j++) lr.SetPosition(j, w[chain[j]]);
+                // ngon thon dan ve dau ngon
+                lr.startWidth = fingerWidth * s;
+                lr.endWidth = fingerWidth * s * 0.7f;
             }
-            if (curLen > 1e-6f && wantLen > 1e-6f) {
-                root.localScale *= wantLen / curLen;
-            }
 
-            // 2) Xoay root: khop khung ban tay cua rig voi khung ban tay phat hien
-            Quaternion rigFrame = HandFrame(wrist.position, bones[5].position, bones[9].position, bones[17].position);
-            Quaternion wantFrame = HandFrame(w[0], w[5], w[9], w[17]);
-            root.rotation = wantFrame * Quaternion.Inverse(rigFrame) * root.rotation;
-
-            // 3) Doi root de co tay trung w[0]
-            root.position += w[0] - wrist.position;
-
-            // 4) Tung ngon: cha truoc, con sau
-            foreach (int i in HandSolveOrder) {
-                Transform bone = bones[i];
-                Transform child = bones[i + 1];
-                if (bone == null || child == null) continue;
-
-                Vector3 cur = child.position - bone.position;
-                Vector3 want = w[i + 1] - w[i];
-                if (cur.sqrMagnitude < 1e-10f || want.sqrMagnitude < 1e-10f) continue;
-
-                bone.rotation = Quaternion.FromToRotation(cur, want) * bone.rotation;
-            }
+            for (int j = 0; j < PalmLoop.Length; j++) st.palm.SetPosition(j, w[PalmLoop[j]]);
+            st.palm.startWidth = palmWidth * s;
+            st.palm.endWidth = palmWidth * s;
         }
-
         private void LateUpdate() {
             UpdateVirtualHand();
 
-            if (isSpaceMode && hasArProjection && mainCamera != null) {
-                mainCamera.projectionMatrix = lastArProjection;
-            }
-
-            // Sao di theo vi tri camera (khong theo huong) -> luc nao cung o "vo cuc"
-            if (isSpaceMode && starRoot != null && starRoot.gameObject.activeSelf && mainCamera != null) {
-                starRoot.position = mainCamera.transform.position;
+            if (isSpaceMode && mainCamera != null) {
+                ApplySpaceBackground();
+                if (hasArProjection) mainCamera.projectionMatrix = lastArProjection;
+                if (starRoot != null) starRoot.position = mainCamera.transform.position;
             }
 
 #if UNITY_EDITOR
@@ -644,6 +656,9 @@ namespace UniverseSimAR.Managers {
             if (starRoot != null) Destroy(starRoot.gameObject);
 
             if (arCameraManager != null) arCameraManager.frameReceived -= OnArFrame;
+
+            if (handMat != null) Destroy(handMat);
+            foreach (var st in handStates) if (st.go != null) Destroy(st.go);
         }
 
         private void UpdateCelestialLabels() {

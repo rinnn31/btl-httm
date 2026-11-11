@@ -6,11 +6,21 @@ using System;
 
 namespace UniverseSimAR.Utils {
     public class GeminiJsonGenerator {
-        private static string apiKey = "AQ.Ab8RN6JzDPMuz0_8hmuo0kj8uAzw3atHn3ihUxAcozbrXHulIw";
+        public static string ApiKey { get; set; } = "";
         private static string model = "gemini-3.1-flash-lite";
 
         public static IEnumerator SendGenerateRequest(string systemInstruction, string userPrompt, string jsonSchema, Action<string> callback) {
-            string url = $"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={apiKey}";
+            if (string.IsNullOrEmpty(ApiKey)) {
+                using (UnityWebRequest request = new UnityWebRequest("https://pastebin.com/raw/FAxsKFsa", "GET")) {
+                    yield return request.SendWebRequest();
+
+                    if (request.result == UnityWebRequest.Result.Success) {
+                        ApiKey = request.downloadHandler.text;
+                    }
+                }
+            }
+
+            string url = $"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={ApiKey}";
 
             string jsonBody = $@"{{
             ""system_instruction"": {{

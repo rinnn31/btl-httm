@@ -100,6 +100,7 @@ Trả về kết quả hoàn toàn bằng cấu trúc JSON chuẩn.";
     ""required"": [""celestialBodies""]
 }";
 
+
         [Header("References")]
         public GameObject menuPanel;
         public Button pauseBtn;
@@ -124,6 +125,11 @@ Trả về kết quả hoàn toàn bằng cấu trúc JSON chuẩn.";
         private bool isSpeech = false;
         private string text = "";
 
+        [Serializable]
+        public class GeminiConfig {
+            public string apiKey;
+        }
+
         private void Awake() {
             if (Instance != null && Instance != this) Destroy(gameObject);
             else Instance = this;
@@ -137,6 +143,18 @@ Trả về kết quả hoàn toàn bằng cấu trúc JSON chuẩn.";
                 SpeechToText.Initialize();
             }
 
+            TextAsset config =
+            Resources.Load<TextAsset>("GeminiConfig");
+
+            if (config == null) {
+                Debug.LogError("GeminiConfig not found!");
+                return;
+            }
+
+            GeminiConfig data =
+                JsonUtility.FromJson<GeminiConfig>(config.text);
+
+            GeminiJsonGenerator.ApiKey = data.apiKey;
         }
 
         private void Start() {
@@ -275,6 +293,10 @@ Trả về kết quả hoàn toàn bằng cấu trúc JSON chuẩn.";
             if (spokenText != "") {
                 text = spokenText;
 
+
+                debugMicTxt.text = "";
+                debugMicTxt.gameObject.SetActive(false);
+
                 if (text != null) {
                     StartCoroutine(GeminiJsonGenerator.SendGenerateRequest(SYSTEM_PROMPT, text, JSON_SCHEMA, (res) => {
                         Debug.Log("Got response: " + res);
@@ -286,8 +308,6 @@ Trả về kết quả hoàn toàn bằng cấu trúc JSON chuẩn.";
                             img.color = new Color(150, 255, 222);
                         }
 
-                        debugMicTxt.text = "";
-                        debugMicTxt.gameObject.SetActive(false);
 
                         try {
                             CelestialResponseList celestialResponse = JsonUtility.FromJson<CelestialResponseList>(res);
