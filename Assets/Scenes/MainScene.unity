@@ -3743,7 +3743,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::UniverseSimAR.Core.UniverseSystem
   gravitationalConstant: 100
   timeScale: 0.1
-  subSteps: 32
+  subSteps: 1
   pause: 0
   thresholds:
     catastrophicSpeedRatio: 2.5

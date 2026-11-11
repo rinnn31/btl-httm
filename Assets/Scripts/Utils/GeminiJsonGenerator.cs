@@ -11,11 +11,12 @@ namespace UniverseSimAR.Utils {
 
         public static IEnumerator SendGenerateRequest(string systemInstruction, string userPrompt, string jsonSchema, Action<string> callback) {
             if (string.IsNullOrEmpty(ApiKey)) {
-                using (UnityWebRequest request = new UnityWebRequest("https://pastebin.com/raw/FAxsKFsa", "GET")) {
+                using (UnityWebRequest request = UnityWebRequest.Get("https://pastebin.com/raw/FAxsKFsa")) {
+                    request.timeout = 10;
                     yield return request.SendWebRequest();
 
                     if (request.result == UnityWebRequest.Result.Success) {
-                        ApiKey = request.downloadHandler.text;
+                        ApiKey = request.downloadHandler.text.Trim();
                     }
                 }
             }

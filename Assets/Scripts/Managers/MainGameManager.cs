@@ -1470,39 +1470,16 @@ namespace UniverseSimAR.Managers {
         /// Khi M >> m thi ket qua gan nhu giong cong thuc cu.
         /// </summary>
         private void ApplyTwoBodyOrbit(Celestial child, Celestial primary) {
-            Vector3 rVec = child.transform.position - primary.transform.position;
-
-            // Dam bao khong bat dau ben trong vung va cham (UniverseSystem bo qua luc hap dan khi distance < sumR)
-            float minDist = (child.radius + primary.radius) * 1.1f;
-            if (rVec.magnitude < minDist) {
-                Vector3 dir = rVec.sqrMagnitude > 1e-10f
-                    ? rVec.normalized
-                    : (universeGroup != null ? universeGroup.right : Vector3.right);
-                rVec = dir * minDist;
-                child.transform.position = primary.transform.position + rVec;
-                ClampToUniversePlane(child.transform);
-                rVec = child.transform.position - primary.transform.position;
-            }
-
+            Vector3 planeNormal = universeGroup != null ? universeGroup.up : Vector3.up;
+            Vector3 rVec = Vector3.ProjectOnPlane(child.transform.position - primary.transform.position, planeNormal);
             float r = rVec.magnitude;
-            if (r < 1e-5f || UniverseSystem.Instance == null) {
-                child.velocity = Vector3.zero;
-                return;
-            }
+            if (r < 1e-5f || UniverseSystem.Instance == null) { child.velocity = primary.velocity; return; }
 
             float G = UniverseSystem.Instance.gravitationalConstant;
-            float M = primary.mass;
-            float m = child.mass;
-            float total = M + m;
-
-            float vRel = Mathf.Sqrt(G * total / r);
-
-            Vector3 planeNormal = universeGroup != null ? universeGroup.up : Vector3.up;
             Vector3 vDir = Vector3.Cross(planeNormal, rVec).normalized;
 
-            Vector3 baseVel = primary.velocity; // van toc nen cua he (tam khoi)
-            child.velocity = baseVel + vDir * (vRel * M / total);
-            primary.velocity = baseVel - vDir * (vRel * m / total);
+            // Giong JS: chi child nhan van toc, primary giu nguyen
+            child.velocity = primary.velocity + vDir * Mathf.Sqrt(G * (primary.mass + child.mass) / r);
         }
 
         private Vector3 GetOrbitVelocity(Vector3 pos, Celestial primary) {
