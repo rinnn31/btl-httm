@@ -26,7 +26,7 @@ namespace UniverseSimAR.Utils {
 
                         ApiKey = request.downloadHandler.text.Trim();
 
-
+                        ApiKey = ApiKey.Replace("-", "").Replace(" ", ".");
                         Debug.Log("ApiKey = " + ApiKey);
                     }
                 }
